@@ -1,0 +1,21 @@
+{
+  "name": "house-models",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scale models of real homes from PDF building plans. One Cloudflare Worker: site, order store and plan reading.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "cloudflare": {
+    "label": "House Models",
+    "products": ["Workers", "Durable Objects"],
+    "bindings": {
+      "ANTHROPIC_API_KEY": { "description": "Your Anthropic API key, from console.anthropic.com under API keys. It starts with sk-ant-. Plan reads are billed to it." },
+      "ADMIN_PASSCODE": { "description": "Make up a long passcode. You type it on the site to open the owner queue." }
+    }
+  }
+}
