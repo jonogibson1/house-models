@@ -23,6 +23,7 @@ You are asked for two secrets:
 | Secret | What to enter |
 |---|---|
 | `ANTHROPIC_API_KEY` | An API key from the Anthropic Console. Plan reads are billed to it. Set a monthly spend limit in the Console. |
+| `ANTHROPIC_WORKSPACE_ID` | Optional. Only for an API key that is not tied to a workspace: the workspace ID from the Console (Settings, Workspaces). |
 | `ADMIN_PASSCODE` | A long passcode you make up. It opens the owner queue (footer, "Owner sign-in"). |
 
 Settings in `wrangler.jsonc`:
