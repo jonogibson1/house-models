@@ -203,7 +203,7 @@ function part(src,x,y,w,h,max){
   var b=c.toDataURL('image/jpeg',0.76).split(',')[1]; c.width=c.height=0; return b;
 }
 function loadImage(file){ return new Promise(function(res,rej){ var u=URL.createObjectURL(file), im=new Image(); im.onload=function(){ res(im); }; im.onerror=function(){ URL.revokeObjectURL(u); rej(); }; im.src=u; }); }
-async function prep(files, photos, prog){
+async function prep(files, prog){
   var maxN=20, docs=[], total=0, i;
   for(i=0;i<files.length;i++){ var buf=new Uint8Array(await files[i].arrayBuffer()); var doc=await window.pdfjsLib.getDocument({data:buf}).promise; docs.push(doc); total+=doc.numPages; }
   /* Real plan sets run to 20 or more sheets. Rank each sheet by its words, keep the floor plan, elevations and roof plan
@@ -268,9 +268,6 @@ async function prep(files, photos, prog){
       await new Promise(function(r){ setTimeout(r,0); });
     }
   }
-  for(i=0;i<(photos||[]).length && i<2 && images.length<maxN+2;i++){
-    try{ var im=await loadImage(photos[i]); images.push(part(im,0,0,im.naturalWidth,im.naturalHeight,1300)); manifest.push('photo of the house as built'); }catch(e){}
-  }
   return { frag:images.map(function(b){ return IMG_PREFIX+b+'"}}'; }).join(','), manifest:manifest, text:lines.join('\n').slice(0,70000), pages:n };
 }
 
@@ -279,7 +276,6 @@ var sampleF=null;
 if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.min.js';
 function listFiles(files, ul){ ul.innerHTML = Array.prototype.map.call(files,function(f){ return '<li><span>'+esc(f.name)+'</span><span>'+kb(f.size)+'</span></li>'; }).join(''); }
 $('#in-plans').addEventListener('change',function(){ sampleF=null; listFiles(this.files,$('#list-plans')); });
-$('#in-photos').addEventListener('change',function(){ listFiles(this.files,$('#list-photos')); });
 $('#fill-test').addEventListener('click',function(){
   $('#in-name').value='Test Neighbour'; $('#in-email').value='neighbour@example.com'; $('#in-addr').value='1 Test Street';
   ['c1','c2','c3'].forEach(function(c){ $('#in-'+c).checked=true; });
@@ -294,7 +290,7 @@ $('#use-sample').addEventListener('click',function(){
 $('#f-start').addEventListener('submit',function(e){
   e.preventDefault();
   var err=$('#start-err'), plans=sampleF ? [sampleF] : Array.prototype.slice.call($('#in-plans').files), msg='';
-  var f={ name:$('#in-name').value.trim(), email:$('#in-email').value.trim(), addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim(), notes:$('#in-notes').value.trim() };
+  var f={ name:$('#in-name').value.trim(), email:$('#in-email').value.trim(), addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim() };
   if(!f.name) msg='Add your name.';
   else if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email)) msg='Add an email address so Jono can reach you about your model.';
   else if(!f.addr) msg='Add the street address of the house.';
@@ -303,21 +299,20 @@ $('#f-start').addEventListener('submit',function(e){
   else if(!$('#in-c1').checked||!$('#in-c2').checked||!$('#in-c3').checked) msg='Tick all three boxes to continue.';
   if(msg){ err.textContent=msg; err.hidden=false; return; }
   err.hidden=true;
-  var photos=Array.prototype.slice.call($('#in-photos').files);
-  this.reset(); $('#in-suburb').value='Ferny Hills'; $('#list-plans').innerHTML=''; $('#list-photos').innerHTML=''; sampleF=null;
-  startOrder(f, plans, photos);
+  this.reset(); $('#in-suburb').value='Ferny Hills'; $('#list-plans').innerHTML=''; sampleF=null;
+  startOrder(f, plans);
 });
 function setPending(msg){ if(ui.pending){ ui.pending.msg=msg; var el=$('#read-msg'); if(el) el.textContent=msg; } }
-async function startOrder(f, plans, photos){
+async function startOrder(f, plans){
   ui.pending={ addr:f.addr+(f.suburb?', '+f.suburb:''), msg:'Getting ready' }; ui.err=''; cur=null; mem.current=null; ui.pay=false;
   go('order');
   var pack, id;
   try{
     if(!window.pdfjsLib) throw { message:'The PDF reader did not load. Reload the page and try again.' };
-    try{ pack=await prep(plans, photos, setPending); }catch(e){ throw { message:'That PDF could not be opened. Is it password protected?' }; }
+    try{ pack=await prep(plans, setPending); }catch(e){ throw { message:'That PDF could not be opened. Is it password protected?' }; }
     if(!pack.frag && !pack.text) throw { message:'No readable pages were found in that PDF.' };
     setPending('Sending your plans');
-    f.files=plans.map(function(x){ return {name:x.name,size:x.size}; }); f.photos=photos.length;
+    f.files=plans.map(function(x){ return {name:x.name,size:x.size}; });
     var made=await api('POST','/api/orders',f);
     id=made.order.id; remember(id, made.key); cur=made.order;
     memFrag[id]=JSON.stringify({manifest:pack.manifest,text:pack.text,pages:pack.pages})+'\n'+pack.frag; pack=null;
@@ -553,7 +548,7 @@ function renderQueue(){
   else {
     d='<div class="row" style="justify-content:space-between"><div class="stack tight"><span class="eyebrow">Order <span class="mono">'+o.id+'</span></span><h2>'+esc(o.name)+'</h2></div>'+pill(o)+'</div>'
      +'<dl class="spec" style="margin-top:14px"><dt>House</dt><dd>'+esc(o.addr)+(o.suburb?', '+esc(o.suburb):'')+'</dd><dt>Email</dt><dd>'+esc(o.email)+'</dd><dt>Plans</dt><dd>'+(o.files||[]).map(function(f){return esc(f.name)+(f.size?' ('+kb(f.size)+')':'');}).join('<br>')+'</dd>'
-     +'<dt>Photos</dt><dd>'+(o.photos||0)+'</dd>'+(o.notes?'<dt>Notes</dt><dd>'+esc(o.notes)+'</dd>':'')+(o.revNote?'<dt>Change asked</dt><dd>'+esc(o.revNote)+'</dd>':'')
+     +(o.notes?'<dt>Notes</dt><dd>'+esc(o.notes)+'</dd>':'')+(o.revNote?'<dt>Change asked</dt><dd>'+esc(o.revNote)+'</dd>':'')
      +(o.total!=null?'<dt>Ordered</dt><dd>'+itemName(o.choice)+', '+money2(o.price)+(o.choice==='stl'?'':(o.delivery==='post'?' plus '+money2(o.ship)+' postage':', pickup'))+'</dd><dt>Total held</dt><dd>'+money2(o.total)+'</dd>':'')+'</dl>';
     var early = o.status==='received'||o.status==='revision'||o.status==='unreadable';
     var editing = ui.edit && ui.edit.id===o.id;

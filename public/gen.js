@@ -240,7 +240,8 @@
     // body
     var bx = [], by = [];
     bl.forEach(function (b) { bx.push(b.x0, b.x1); by.push(b.y0, b.y1); });
-    pegs.forEach(function (g) { bx.push(g.cx - K.peg / 2, g.cx + K.peg / 2); by.push(g.cy - K.peg / 2, g.cy + K.peg / 2); });
+    /* Pegs are square frustums with 45 degree sides, so they print without any overhang and self-centre in the socket. */
+    pegs.forEach(function (g) { var t = K.peg / 2 - g.height; bx.push(g.cx - K.peg / 2, g.cx + K.peg / 2, g.cx - t, g.cx + t); by.push(g.cy - K.peg / 2, g.cy + K.peg / 2, g.cy - t, g.cy + t); });
     if (hole) { bx.push(hole.x0, hole.x1); by.push(hole.y0, hole.y1); }
     var bodyT = meshField(axis(bx, 0, 0, W), axis(by, 0, 0, D), function (x, y, cx, cy) {
       if (inHole(cx, cy)) return -1;
@@ -249,7 +250,8 @@
       if (h < 0) return -1;
       for (k = 0; k < pegs.length; k++) {
         var g = pegs[k];
-        if (g.H === h && Math.abs(cx - g.cx) < K.peg / 2 && Math.abs(cy - g.cy) < K.peg / 2) return q(h + g.height);
+        if (g.H === h && Math.abs(cx - g.cx) < K.peg / 2 && Math.abs(cy - g.cy) < K.peg / 2)
+          return q(h + Math.max(0, Math.min(g.height, K.peg / 2 - Math.max(Math.abs(x - g.cx), Math.abs(y - g.cy)))));
       }
       return h;
     }, null);
@@ -274,12 +276,15 @@
         rx.push(b.x0 - K.clear, b.x1 + K.clear, b.rx0, b.rx1); ry.push(b.y0 - K.clear, b.y1 + K.clear, b.ry0, b.ry1);
       });
       var sock = pegs.filter(function (s) { return s.H === L; });
-      sock.forEach(function (s) { rx.push(s.cx - K.socket / 2, s.cx + K.socket / 2); ry.push(s.cy - K.socket / 2, s.cy + K.socket / 2); });
+      sock.forEach(function (s) { for (var u = -K.socket / 2; u <= K.socket / 2 + 1e-9; u += K.socket / 12) { rx.push(s.cx + u); ry.push(s.cy + u); } });
       if (hole) { rx.push(hole.x0, hole.x1); ry.push(hole.y0, hole.y1); }
       var t = meshField(axis(rx, res, lo[0], hi[0]), axis(ry, res, lo[1], hi[1]),
         function (x, y, cx, cy) { return inHole(cx, cy) ? -1 : roofTop(bl, L, x, y, cx, cy); },
         function (cx, cy) {
-          for (var k = 0; k < sock.length; k++) if (Math.abs(cx - sock[k].cx) < K.socket / 2 && Math.abs(cy - sock[k].cy) < K.socket / 2) return sock[k].depth;
+          for (var k = 0; k < sock.length; k++) {
+            var dd = Math.max(Math.abs(cx - sock[k].cx), Math.abs(cy - sock[k].cy));
+            if (dd < K.socket / 2) return q(Math.max(0, Math.min(sock[k].depth, K.socket / 2 - dd + 0.2)));
+          }
           return 0;
         });
       if (!t.length) return;
@@ -294,7 +299,7 @@
     bl.forEach(function (b) { if (b.e > 0) minEave = Math.min(minEave, b.e); minSide = Math.min(minSide, b.x1 - b.x0, b.y1 - b.y0); });
     flags.push(fits ? { lvl: 'ok', text: 'Fits the H2S bed (340 x 320 mm) in one piece per part.' }
       : { lvl: 'bad', text: 'Too big for the H2S bed at 1:' + scale + '. Pick a smaller scale.' });
-    flags.push({ lvl: 'ok', text: 'No supports needed. Every part prints flat side down with no overhangs.' });
+    flags.push({ lvl: 'ok', text: 'No supports needed. Every part prints flat side down, and every surface, including the peg sockets, rises at 45 degrees or steeper.' });
     if (parts.length > 2) flags.push({ lvl: 'warn', text: (parts.length - 1) + ' roof pieces, one per storey level. Each prints flat.' });
     if (trimmed) flags.push({ lvl: 'warn', text: 'The lower roof is trimmed where it meets the taller walls, with 0.2 mm clearance.' });
     if (orn) flags.push({ lvl: 'ok', text: 'Christmas tree version at 1:' + scale + ', ' + Math.round(Math.max(W, D)) + ' mm across. A ' + K.hole + ' mm hole runs down through roof and walls: thread a ribbon through both and knot it under the walls.' });

@@ -126,7 +126,7 @@ function readPrompt(manifest, text) {
   if (text) s += 'Text extracted from the PDF follows at the end. Each line is: page, x and y position as fractions of the page (0,0 is top left), then the text. Use it for exact dimension figures. Dimensions on Australian plans are in millimetres unless marked otherwise.\n';
   s += '\nTask: describe the house as a small set of rectangular blocks, each with its own roof, so a generator can build it.\n'
     + '1. Find the floor plan or plans, the elevations, and the roof plan if there is one. Ignore site, electrical, slab and detail sheets except for orientation.\n'
-    + '2. Take the external wall outline of the roofed, enclosed building, including an attached garage. Leave out open carports, pergolas, decks, awnings and patios unless they sit under the main roof, and list what you left out in assumptions.\n'
+    + '2. Model only what is drawn on these plans. Take the external wall outline of the roofed, enclosed building, including an attached garage. Leave out open carports, pergolas, decks, awnings and patios unless they sit under the main roof, and list what you left out in assumptions.\n'
     + '3. Cover that outline with as few axis-aligned rectangles as you can, 1 to 6. Rectangles may overlap.\n'
     + '4. Give each rectangle its size and position in metres from the dimension strings, its storeys, wall height, and the roof it would have by itself. Roofs of blocks at the same height merge automatically.\n\n'
     + SHAPE
@@ -259,8 +259,8 @@ async function handle(request, env) {
     if (await capped('orders', 'DAILY_ORDER_CAP')) return fail(429, 'cap', ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
-      name, email, addr, suburb: str(b.suburb, 60), notes: str(b.notes, 600),
-      files: (Array.isArray(b.files) ? b.files : []).slice(0, 6).map((f) => ({ name: str(f && f.name, 120), size: +(f && f.size) || 0 })), photos: Math.min(20, +b.photos || 0),
+      name, email, addr, suburb: str(b.suburb, 60), notes: '',
+      files: (Array.isArray(b.files) ? b.files : []).slice(0, 6).map((f) => ({ name: str(f && f.name, 120), size: +(f && f.size) || 0 })), 
       status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '', pages: 0, images: 0, reads: 0, busy: 0 };
     await db.save('o:' + o.id, o);
     return json({ order: publicView(o), key: o.key });
