@@ -57,7 +57,7 @@ npm run dev
 
 - Real payments. The card page is a mock and collects nothing.
 - Emails. Customers come back through the order link shown on their order page.
-- Windows, doors and other facade detail. The model is the outside shape and roof only.
+- Window frames, glazing bars, gutters and wall textures. Windows, doors and garage doors are cut 1 mm into the walls with 45 degree heads.
 
 ## Third-party code
 

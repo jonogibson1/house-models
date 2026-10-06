@@ -20,8 +20,14 @@ document.addEventListener('click',function(e){
 
 /* Sample on the home page: a typical single-storey brick home, about 19 x 9 m, hip roof at 22.5 degrees, garage at the front. */
 var SAMPLE = { scale:'auto', blocks:[
-  {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n'},
-  {name:'Garage and porch',x:11.51,y:3.83,w:7.44,d:4.92,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n'} ]};
+  {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n',openings:[
+    {side:'s',at:1.2,w:2.4,sill:0,head:2.1,kind:'door'},{side:'s',at:6.2,w:1.45,sill:0.9,head:2.1,kind:'window'},{side:'s',at:9.9,w:1.45,sill:0.9,head:2.1,kind:'window'},
+    {side:'s',at:13.3,w:0.85,sill:1.2,head:2.1,kind:'window'},{side:'s',at:16.3,w:1.45,sill:0.9,head:2.1,kind:'window'},
+    {side:'w',at:2.0,w:2.4,sill:0,head:2.1,kind:'door'},{side:'w',at:5.2,w:1.2,sill:0.9,head:2.1,kind:'window'},
+    {side:'n',at:3.5,w:1.8,sill:1.0,head:2.1,kind:'window'},{side:'n',at:7.4,w:1.2,sill:1.2,head:2.1,kind:'window'},{side:'n',at:9.8,w:0.6,sill:1.5,head:2.1,kind:'window'},
+    {side:'e',at:1.0,w:1.8,sill:0.9,head:2.1,kind:'window'}]},
+  {name:'Garage and porch',x:11.51,y:3.83,w:7.44,d:4.92,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n',openings:[
+    {side:'e',at:2.05,w:2.4,sill:0,head:2.2,kind:'garage'},{side:'e',at:0.5,w:0.9,sill:0,head:2.1,kind:'door'}]} ]};
 function treeOf(params){ var t=clone(params); t.ornament=true; return t; }
 function itemName(c){ return c==='stl'?'STL files':c==='tree'?'Christmas tree version':'Printed model'; }
 
@@ -122,11 +128,16 @@ Viewer.prototype.set=function(result){
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p.tris,3)); g.computeVertexNormals();
     var m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(cssVar(p.kind==='roof'?'--roof':'--wall')),roughness:0.85,metalness:0,flatShading:true}));
     m.userData.part=p; m.position.set(-cx,-cy,p.z0); self.model.add(m);
+    if(p.detail && p.detail.length){
+      var gd=new THREE.BufferGeometry(); gd.setAttribute('position',new THREE.BufferAttribute(p.detail,3)); gd.computeVertexNormals();
+      var md=new THREE.Mesh(gd,new THREE.MeshStandardMaterial({color:new THREE.Color(cssVar('--glass')),roughness:0.4,metalness:0.1,flatShading:true,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
+      md.userData.part=p; md.position.set(-cx,-cy,p.z0); self.model.add(md);
+    }
   });
   var span=Math.max(260,Math.max(result.size[0],result.size[1])*1.6);
   var grid=new THREE.GridHelper(Math.ceil(span/10)*10*2, Math.ceil(span/10)*2, new THREE.Color(cssVar('--mat-line')), new THREE.Color(cssVar('--mat-line')));
   grid.rotation.x=Math.PI/2; grid.position.z=-0.05; grid.material.transparent=true; grid.material.opacity=0.55; this.deco.add(grid);
-  var land = result.size[0] >= result.size[1], aw=land?210:148, ah=land?148:210;
+  var land = result.size[0] >= result.size[1], aw=land?297:210, ah=land?210:297;
   var pts=[[-aw/2,-ah/2],[aw/2,-ah/2],[aw/2,ah/2],[-aw/2,ah/2],[-aw/2,-ah/2]].map(function(p){ return new THREE.Vector3(p[0],p[1],0.05); });
   this.deco.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--rule'))})));
   /* A standard 375 ml drink can beside the model, for size: 66 mm across, 122 mm tall. */
@@ -181,7 +192,7 @@ document.addEventListener('click',function(e){ var b=e.target.closest('[data-her
 function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   $('#price-print').textContent='From '+money(p.min);
-  $('#price-print-note').textContent='For most single-storey homes, including the sample above. Larger homes use more filament and cost a little more. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
+  $('#price-print-note').textContent='Priced on the filament your model uses. The sample above, a 19 metre single-storey home at 1:100, is '+money(printPrice(r))+'. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
   var tr=built(treeOf(SAMPLE),0.8);
@@ -192,7 +203,7 @@ function renderHome(){
   $('#about-pic').innerHTML=PIC_SVG;
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
   $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
-    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can and the yellow outline an A5 page. Drag to turn it.';
+    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can and the yellow outline an A4 page. Windows and doors are cut into the walls. Drag to turn it.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -343,8 +354,9 @@ function facts(o, choice){
   if(choice==='tree' && q.tree) return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.tree.scale+'</dd><dt>Size</dt><dd>'+q.tree.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
    +'<dt>Hanging</dt><dd>ribbon through a hole in the roof</dd><dt>Filament</dt><dd>about '+q.tree.grams+' g</dd></dl>';
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Model size</dt><dd>'+q.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
-   +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return esc(String(p.label).toLowerCase());}).join(', ')+'</dd><dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
+   +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return esc(String(p.label).toLowerCase());}).join(', ')+'</dd>'+(r0openings(o)?'<dt>Openings</dt><dd>'+r0openings(o)+' windows and doors</dd>':'')+'<dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
 }
+function r0openings(o){ var n=0; (o.params&&o.params.blocks||[]).forEach(function(b){ n+=(b.openings||[]).length; }); return n; }
 function ulist(a){ return '<ul class="plain">'+a.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>'; }
 function shipOf(o, choice){ return choice==='tree' && o.quote.tree ? o.quote.tree.ship : o.quote.ship; }
 function totalsOf(o, choice, delivery){ var tr=choice==='tree' && o.quote.tree, price=choice==='stl'?o.quote.stl:tr?o.quote.tree.price:o.quote.print, ship=(choice!=='stl' && delivery==='post')?shipOf(o,choice).cost:0; return { price:price, ship:ship, total:price+ship }; }
@@ -412,10 +424,10 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape and roof your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o,ch)
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape, roof, windows and doors your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
-     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in two colours at 1:'+q.scale+'. Yours to keep.</span></label>'
+     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in two colours at 1:'+q.scale+', windows and doors included. Yours to keep.</span></label>'
      +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
@@ -435,7 +447,7 @@ function renderOrder(){
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
-  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The can beside it is a standard 375 ml drink can, for size. The yellow outline is an A5 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
+  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The can beside it is a standard 375 ml drink can, for size. The yellow outline is an A4 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
   var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
   $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ var dv=$('#dv-post'); o.choice=this.value; if(dv) o.delivery=dv.checked?'post':'pickup'; renderOrder(); var f=$('#ch-'+o.choice); if(f) f.focus({preventScroll:true}); }); });
@@ -557,7 +569,7 @@ function renderQueue(){
     if(editing){
       var er=built(ui.edit.params,0.8), eq=estFromBuild(er);
       ed=stage+'<div class="stack" style="margin-top:14px"><div class="grid2"><div class="field"><label for="ed-scale">Scale</label><select id="ed-scale">'
-        +[['auto','Auto (fit an A5 page)'],['100','1:100'],['150','1:150'],['200','1:200'],['250','1:250']].map(function(s){ return '<option value="'+s[0]+'"'+(String(ui.edit.params.scale)===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join('')+'</select></div></div>'
+        +[['auto','Auto (1:100 if it fits the plate)'],['100','1:100'],['150','1:150'],['200','1:200'],['250','1:250']].map(function(s){ return '<option value="'+s[0]+'"'+(String(ui.edit.params.scale)===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join('')+'</select></div></div>'
         +'<div id="ed-blocks" class="stack tight">'+blockEditor(ui.edit.params)+'</div>'
         +'<div class="row"><button type="button" class="btn ghost sm" id="ed-add">Add a block</button><span class="muted small">A block is one rectangle of the house with its own roof. Offsets are measured from the south-west corner.</span></div>'
         +'<div id="ed-out" class="stack">'+flagList(eq.flags)+estTable(eq)+'</div>'

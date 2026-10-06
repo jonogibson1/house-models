@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
   var BED = { x: 340, y: 320, z: 340 };
-  var K = { fascia: 0.6, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0, hole: 3.2, ornament: 75 };
+  var K = { fascia: 0.8, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0, hole: 3.2, ornament: 75, reveal: 1.0, step: 0.25, margin: 10 };
   function q(v) { return Math.round(v * 1e4) / 1e4; }
 
   function toBlocks(p) {
@@ -19,7 +19,11 @@
         H: f(st * Math.max(2, +b.storeyH || 2.7)),
         rx0: q(x0 - e), ry0: q(y0 - e), rx1: q(x1 + e), ry1: q(y1 + e),
         roof: b.roof || 'hip', tan: Math.tan(Math.max(0, Math.min(60, +b.pitch || 0)) * Math.PI / 180),
-        ridge: b.ridge || 'auto', high: b.high || 'n'
+        ridge: b.ridge || 'auto', high: b.high || 'n',
+        sH: f(Math.max(2, +b.storeyH || 2.7)), st: st,
+        ops: (Array.isArray(b.openings) ? b.openings : []).map(function (o) {
+          return { side: o.side, at: f(+o.at || 0), w: f(+o.w || 0), sill: f(+o.sill || 0), head: f(+o.head || 0), kind: o.kind || 'window', storey: Math.max(1, Math.min(st, Math.round(+o.storey || 1))) };
+        })
       };
     });
     var mx = Infinity, my = Infinity;
@@ -193,14 +197,100 @@
     return 1.24e-3 * (shell + 0.12 * (st.vol - shell));
   }
 
+  /* 1:100 unless the house is too big for the plate, then the next standard scale down. 10 mm clear all round. */
   function pickScale(p) {
-    var opts = [150, 200, 250, 300], best = 300;
+    var opts = [100, 150, 200, 250, 300], best = 300, X = BED.x - 2 * K.margin, Y = BED.y - 2 * K.margin;
     for (var k = 0; k < opts.length; k++) {
       var bl = toBlocks({ scale: opts[k], blocks: p.blocks }), w = 0, d = 0;
       bl.forEach(function (b) { w = Math.max(w, b.rx1); d = Math.max(d, b.ry1); });
-      if (Math.max(w, d) <= 210 && Math.min(w, d) <= 148) { best = opts[k]; break; }
+      if ((w <= X && d <= Y) || (w <= Y && d <= X)) { best = opts[k]; break; }
     }
     return best;
+  }
+
+  /* Openings become recesses cut K.reveal deep into the wall face. The head of each recess steps back at 45 degrees,
+     so it prints without support. Openings on a face that is covered by another block are skipped. */
+  function openingBoxes(bl) {
+    var out = [];
+    function covered(x, y) { return bl.some(function (b) { return x > b.x0 && x < b.x1 && y > b.y0 && y < b.y1; }); }
+    bl.forEach(function (b) {
+      b.ops.forEach(function (o) {
+        var horiz = o.side === 's' || o.side === 'n', len = horiz ? b.x1 - b.x0 : b.y1 - b.y0;
+        var a0 = q(Math.max(0.8, o.at)), a1 = q(Math.min(len - 0.8, o.at + o.w));
+        if (!(o.side === 's' || o.side === 'n' || o.side === 'e' || o.side === 'w') || a1 - a0 < 1.2) return;
+        var base = (o.storey - 1) * b.sH, top = o.storey * b.sH - 0.8;
+        var z0 = q(base + (o.kind === 'window' ? Math.max(0.6, o.sill) : 0)), z1 = q(Math.min(top, base + o.head));
+        if (z1 - z0 < 1.5) return;
+        var e = 0.05, pts = [a0 + e, (a0 + a1) / 2, a1 - e], o1 = K.reveal + 0.3;
+        var bad = pts.some(function (a) {
+          return o.side === 's' ? covered(b.x0 + a, b.y0 - o1) : o.side === 'n' ? covered(b.x0 + a, b.y1 + o1)
+            : o.side === 'w' ? covered(b.x0 - o1, b.y0 + a) : covered(b.x1 + o1, b.y0 + a);
+        });
+        if (bad) return;
+        var bx = horiz ? [b.x0 + a0, b.x0 + a1] : null, by = horiz ? null : [b.y0 + a0, b.y0 + a1];
+        out.push({ side: o.side, kind: o.kind, z0: z0, z1: z1, x: bx, y: by,
+          plane: o.side === 's' ? b.y0 : o.side === 'n' ? b.y1 : o.side === 'w' ? b.x0 : b.x1 });
+      });
+    });
+    return out;
+  }
+
+  /* Walls as a solid on a rectilinear grid. Every boundary face is a whole grid face, so the mesh is closed by construction.
+     cell states: 0 outside, 1 solid, 2 cut away for an opening (faces next to these are detail faces). */
+  function bodyGrid(bl, pegs, hole, ops, W, D) {
+    var bx = [0, W], by = [0, D], bz = [0], st = K.step, n, k;
+    bl.forEach(function (b) { bx.push(b.x0, b.x1); by.push(b.y0, b.y1); bz.push(b.H); });
+    pegs.forEach(function (g) {
+      for (n = 0; n * 0.2 <= g.height + 1e-9; n++) { var h = K.peg / 2 - n * 0.2; bx.push(g.cx - h, g.cx + h); by.push(g.cy - h, g.cy + h); bz.push(g.H + n * 0.2); }
+    });
+    if (hole) { bx.push(hole.x0, hole.x1); by.push(hole.y0, hole.y1); }
+    ops.forEach(function (o) {
+      bz.push(o.z0, o.z1);
+      for (n = 1; n * st < K.reveal + 1e-9; n++) bz.push(o.z1 - n * st);
+      var ins = [];
+      for (n = 1; n * st <= K.reveal + 1e-9; n++) ins.push(n * st);
+      if (o.x) { bx.push(o.x[0], o.x[1]); ins.forEach(function (d) { by.push(o.side === 's' ? o.plane + d : o.plane - d); }); }
+      else { by.push(o.y[0], o.y[1]); ins.forEach(function (d) { bx.push(o.side === 'w' ? o.plane + d : o.plane - d); }); }
+    });
+    var Hmax = 0; bl.forEach(function (b) { Hmax = Math.max(Hmax, b.H); }); pegs.forEach(function (g) { Hmax = Math.max(Hmax, g.H + g.height); });
+    var xs = axis(bx, 0, 0, W), ys = axis(by, 0, 0, D), zs = axis(bz, 0, 0, Hmax);
+    var nx = xs.length - 1, ny = ys.length - 1, nz = zs.length - 1, S = new Uint8Array(nx * ny * nz);
+    function id(i, j, l) { return (l * ny + j) * nx + i; }
+    for (var j = 0; j < ny; j++) for (var i = 0; i < nx; i++) {
+      var cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2, top = -1;
+      if (hole && cx > hole.x0 && cx < hole.x1 && cy > hole.y0 && cy < hole.y1) continue;
+      for (k = 0; k < bl.length; k++) { var b = bl[k]; if (cx > b.x0 && cx < b.x1 && cy > b.y0 && cy < b.y1 && b.H > top) top = b.H; }
+      if (top < 0) continue;
+      var peg = null;
+      for (k = 0; k < pegs.length; k++) if (pegs[k].H === top && Math.abs(cx - pegs[k].cx) < K.peg / 2 && Math.abs(cy - pegs[k].cy) < K.peg / 2) peg = pegs[k];
+      var mine = ops.filter(function (o) { return o.x ? cx > o.x[0] && cx < o.x[1] : cy > o.y[0] && cy < o.y[1]; });
+      for (var l = 0; l < nz; l++) {
+        var cz = (zs[l] + zs[l + 1]) / 2, v = 0;
+        if (cz < top) v = 1;
+        else if (peg && cz < top + peg.height) { var dd = Math.max(Math.abs(cx - peg.cx), Math.abs(cy - peg.cy)); if (dd < K.peg / 2 - (cz - top) - 0.1) v = 1; }
+        if (v === 1) for (k = 0; k < mine.length; k++) {
+          var o = mine[k];
+          if (cz <= o.z0 || cz >= o.z1) continue;
+          var d = o.side === 's' ? cy - o.plane : o.side === 'n' ? o.plane - cy : o.side === 'w' ? cx - o.plane : o.plane - cx;
+          if (d > 0 && d < K.reveal && d < o.z1 - cz) { v = 2; break; }
+        }
+        S[id(i, j, l)] = v;
+      }
+    }
+    var T = [], Dt = [];
+    function quad(arr, a, b, c, d) { arr.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]); }
+    function nb(i, j, l) { return i < 0 || j < 0 || l < 0 || i >= nx || j >= ny || l >= nz ? 0 : S[id(i, j, l)]; }
+    for (var l2 = 0; l2 < nz; l2++) for (var j2 = 0; j2 < ny; j2++) for (var i2 = 0; i2 < nx; i2++) {
+      if (S[id(i2, j2, l2)] !== 1) continue;
+      var x0 = xs[i2], x1 = xs[i2 + 1], y0 = ys[j2], y1 = ys[j2 + 1], z0 = zs[l2], z1 = zs[l2 + 1], m;
+      m = nb(i2 + 1, j2, l2); if (m !== 1) { quad(T, [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]); if (m === 2) quad(Dt, [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1]); }
+      m = nb(i2 - 1, j2, l2); if (m !== 1) { quad(T, [x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]); if (m === 2) quad(Dt, [x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]); }
+      m = nb(i2, j2 + 1, l2); if (m !== 1) { quad(T, [x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]); if (m === 2) quad(Dt, [x0, y1, z0], [x0, y1, z1], [x1, y1, z1], [x1, y1, z0]); }
+      m = nb(i2, j2 - 1, l2); if (m !== 1) { quad(T, [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]); if (m === 2) quad(Dt, [x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]); }
+      m = nb(i2, j2, l2 + 1); if (m !== 1) { quad(T, [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]); if (m === 2) quad(Dt, [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]); }
+      m = nb(i2, j2, l2 - 1); if (m !== 1) { quad(T, [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]); if (m === 2) quad(Dt, [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], [x1, y0, z0]); }
+    }
+    return { tris: new Float32Array(T), detail: new Float32Array(Dt) };
   }
 
   /* Christmas tree version: the smallest standard scale that keeps the longest side under about 75 mm. */
@@ -237,26 +327,11 @@
     bl.forEach(function (b) { if (levels.indexOf(b.H) < 0) levels.push(b.H); });
     levels.sort(function (a, b) { return a - b; });
 
-    // body
-    var bx = [], by = [];
-    bl.forEach(function (b) { bx.push(b.x0, b.x1); by.push(b.y0, b.y1); });
-    /* Pegs are square frustums with 45 degree sides, so they print without any overhang and self-centre in the socket. */
-    pegs.forEach(function (g) { var t = K.peg / 2 - g.height; bx.push(g.cx - K.peg / 2, g.cx + K.peg / 2, g.cx - t, g.cx + t); by.push(g.cy - K.peg / 2, g.cy + K.peg / 2, g.cy - t, g.cy + t); });
-    if (hole) { bx.push(hole.x0, hole.x1); by.push(hole.y0, hole.y1); }
-    var bodyT = meshField(axis(bx, 0, 0, W), axis(by, 0, 0, D), function (x, y, cx, cy) {
-      if (inHole(cx, cy)) return -1;
-      var h = -1;
-      for (var k = 0; k < bl.length; k++) { var b = bl[k]; if (inRect(cx, cy, b.x0, b.y0, b.x1, b.y1) && b.H > h) h = b.H; }
-      if (h < 0) return -1;
-      for (k = 0; k < pegs.length; k++) {
-        var g = pegs[k];
-        if (g.H === h && Math.abs(cx - g.cx) < K.peg / 2 && Math.abs(cy - g.cy) < K.peg / 2)
-          return q(h + Math.max(0, Math.min(g.height, K.peg / 2 - Math.max(Math.abs(x - g.cx), Math.abs(y - g.cy)))));
-      }
-      return h;
-    }, null);
+    // walls, with openings cut in when building at preview or print detail
+    var ops = orn || res >= 2 ? [] : openingBoxes(bl);
+    var body = bodyGrid(bl, pegs, hole, ops, W, D), bodyT = body.tris;
     var bs = stats(bodyT);
-    parts.push({ kind: 'body', name: 'body', label: 'Walls', z0: 0, tris: bodyT, st: bs, grams: grams(bs) });
+    parts.push({ kind: 'body', name: 'body', label: 'Walls', z0: 0, tris: bodyT, detail: body.detail, st: bs, grams: grams(bs) });
 
     // one roof piece per eave level
     var trimmed = false;
@@ -297,6 +372,7 @@
     var fits = (W <= BED.x && D <= BED.y) || (W <= BED.y && D <= BED.x);
     var minEave = Infinity, minSide = Infinity;
     bl.forEach(function (b) { if (b.e > 0) minEave = Math.min(minEave, b.e); minSide = Math.min(minSide, b.x1 - b.x0, b.y1 - b.y0); });
+    if (ops.length) flags.push({ lvl: 'ok', text: ops.length + ' windows and doors cut ' + K.reveal + ' mm deep into the walls, with 45 degree heads so they print without support.' });
     flags.push(fits ? { lvl: 'ok', text: 'Fits the H2S bed (340 x 320 mm) in one piece per part.' }
       : { lvl: 'bad', text: 'Too big for the H2S bed at 1:' + scale + '. Pick a smaller scale.' });
     flags.push({ lvl: 'ok', text: 'No supports needed. Every part prints flat side down, and every surface, including the peg sockets, rises at 45 degrees or steeper.' });
@@ -311,7 +387,7 @@
     if (H > BED.z) flags.push({ lvl: 'bad', text: 'Taller than the printer allows.' });
     return {
       scale: scale, ornament: orn, hole: hole, parts: parts, size: [W, D, H], grams: g, hours: g / 16 + 0.2 * parts.length,
-      fits: fits, flags: flags, pegs: pegs.length, blocks: bl.length,
+      fits: fits, flags: flags, openings: ops.length, pegs: pegs.length, blocks: bl.length,
       tris: parts.reduce(function (a, pt) { return a + pt.tris.length / 9; }, 0)
     };
   }
