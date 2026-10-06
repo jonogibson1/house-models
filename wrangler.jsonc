@@ -6,7 +6,7 @@
   "assets": { "directory": "./public", "binding": "ASSETS" },
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
-  "vars": { "MODEL": "claude-opus-5-5" },
+  "vars": { "MODEL": "claude-opus-5-5", "ANTHROPIC_WORKSPACE_ID": "wrkspc_019vRTojKtpszYuMUTgxqr7y" },
   "keep_vars": true,
   "observability": { "enabled": true }
 }
