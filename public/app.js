@@ -101,7 +101,7 @@ Viewer.prototype.mount=function(holder, opts){
   opts=opts||{}; this.holder=holder; holder.textContent='';
   if(!this.ok){ var n=document.createElement('div'); n.className='nogl'; n.textContent='The 3D preview needs WebGL, which this browser has switched off.'; holder.appendChild(n); return; }
   holder.appendChild(this.r.domElement);
-  if(opts.watermark){ var w=document.createElement('div'); w.className='wm'; w.textContent='PREVIEW'; holder.appendChild(w); }
+  if(opts.watermark){ var w=document.createElement('div'); w.className='wm'; w.setAttribute('aria-hidden','true'); holder.appendChild(w); }
   var self=this, tools=document.createElement('div'); tools.className='tools';
   var b=document.createElement('button'); b.type='button'; b.textContent='Lift roof'; b.setAttribute('aria-pressed',String(this.explode));
   b.addEventListener('click',function(){ self.explode=!self.explode; b.setAttribute('aria-pressed',String(self.explode)); self.place(); self.draw(); });
@@ -387,9 +387,9 @@ function renderOrder(){
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
-  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The yellow outline is an A5 page.</span></div><div class="stack">'+right+link+'</div></div>';
+  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The yellow outline is an A5 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
-  var v=viewer('order'); v.mount($('#stage-order'),{watermark:o.status==='preview'||o.status==='hold_placed'||o.status==='declined'}); v.set(r);
+  var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
   $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ o.choice=this.value; $('#dv-box').hidden=this.value==='stl'; }); });
   $$('input[name=dv]',root).forEach(function(i){ i.addEventListener('change',function(){ o.delivery=this.value; }); });
   var tp=$('#to-pay'); if(tp) tp.addEventListener('click',function(){ o.choice=($('#ch-stl').checked?'stl':'print'); o.delivery=($('#dv-post').checked?'post':'pickup'); ui.pay=true; renderOrder(); window.scrollTo(0,0); });

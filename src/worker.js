@@ -15,8 +15,7 @@ const MAX_UPLOAD = 26 * 1024 * 1024;
 const MAX_META = 200000;
 const MAX_JSON = 300000;
 const BUSY_MS = 6 * 60 * 1000;
-const MAX_READS_PER_ORDER = 4;
-const READS_PER_IP = 12, ORDERS_PER_IP = 8, PASSCODE_TRIES = 40;
+const PASSCODE_TRIES = 40;
 
 /* ---------- storage: one small strongly consistent store ---------- */
 export class Store extends DurableObject {
@@ -24,19 +23,14 @@ export class Store extends DurableObject {
   async save(k, v) { await this.ctx.storage.put(k, v); }
   /* Newest orders first. */
   async scan(prefix) { const m = await this.ctx.storage.list({ prefix, limit: 3000 }); return [...m.values()].sort((a, b) => b.created - a.created).slice(0, 300); }
-  /* Atomic counters with a ceiling. bump returns false once the ceiling is reached. */
+  /* Atomic counter with a ceiling. Returns false once the ceiling is reached. */
   async bump(k, max) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return false; await this.ctx.storage.put(k, n + 1); return true; }
-  async bumpAll(pairs) {
-    const ns = []; for (const [k, max] of pairs) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return k; ns.push(n); }
-    for (let i = 0; i < pairs.length; i++) await this.ctx.storage.put(pairs[i][0], ns[i] + 1);
-    return '';
-  }
   /* Claims an order for one slow step (a read or a change) so two cannot run at once. Returns '' when claimed, or why not. */
   async claim(k, statuses, kind) {
     const o = await this.ctx.storage.get(k);
     if (!o || !statuses.includes(o.status)) return 'step';
     if (o.busy && Date.now() - o.busy < BUSY_MS) return 'busy';
-    if (kind === 'read') { if ((o.reads || 0) >= MAX_READS_PER_ORDER) return 'limit'; o.reads = (o.reads || 0) + 1; }
+    if (kind === 'read') o.reads = (o.reads || 0) + 1;
     if (kind === 'revise') { if (o.revUsed) return 'step'; o.revUsed = true; }
     o.busy = Date.now(); await this.ctx.storage.put(k, o); return '';
   }
@@ -214,7 +208,8 @@ async function handle(request, env) {
   const pricing = { ...DEFAULT_PRICING, ...((await db.load('pricing')) || {}) };
   const body = async () => { const t = dec.decode(await readCapped(request, MAX_JSON)); try { const v = JSON.parse(t); if (v && typeof v === 'object') return v; } catch (e) { /* fall through */ } throw { status: 400 }; };
   const ip = ipKey(request.headers.get('cf-connecting-ip') || 'local'), today = day();
-  const cap = (name, dflt) => { const n = parseInt(env[name] || '', 10); return n > 0 ? n : dflt; };
+  /* No spend caps unless the owner sets one: DAILY_READ_CAP or DAILY_ORDER_CAP, as a whole number, in the Worker's variables. */
+  const capped = async (counter, name) => { const n = parseInt(env[name] || '', 10); return n > 0 ? !(await db.bump(counter + ':' + today, n)) : false; };
 
   if (path === '/api/config' && m === 'GET') return json({ pricing, post: POST, ready: !!env.ANTHROPIC_API_KEY });
 
@@ -254,8 +249,7 @@ async function handle(request, env) {
     const b = await body();
     const name = str(b.name, 80), email = str(b.email, 120), addr = str(b.addr, 120);
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !addr) return fail(400, 'bad_form', 'Name, email and street address are needed.');
-    const hit = await db.bumpAll([['ip:' + today + ':' + ip, ORDERS_PER_IP], ['orders:' + today, cap('DAILY_ORDER_CAP', 80)]]);
-    if (hit) return fail(429, 'cap', hit.startsWith('ip:') ? 'That is a lot of uploads for one day. Try again tomorrow.' : ERR.cap);
+    if (await capped('orders', 'DAILY_ORDER_CAP')) return fail(429, 'cap', ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
       name, email, addr, suburb: str(b.suburb, 60), notes: str(b.notes, 600),
@@ -271,10 +265,8 @@ async function handle(request, env) {
     const step = om[2] || '';
     if (!step && m === 'GET') return json({ order: publicView(o) });
     if (m !== 'POST') return fail(405, 'method', 'Not allowed.');
-    const WHY = { step: [409, 'bad_step', 'That step does not apply to this order right now.'], busy: [409, 'busy', 'Your plans are already being worked on. Give it a couple of minutes.'],
-      limit: [429, 'limit', 'These plans have been tried a few times now. Upload them again as a new order, or try a different PDF.'] };
-    /* Spend guards, checked together: this visitor today, then the whole site today. */
-    const spend = async () => { const hit = await db.bumpAll([['rip:' + today + ':' + ip, READS_PER_IP], ['reads:' + today, cap('DAILY_READ_CAP', 40)]]); return !hit ? '' : hit.startsWith('rip:') ? 'That is a lot of plan reads for one day. Try again tomorrow.' : ERR.cap; };
+    const WHY = { step: [409, 'bad_step', 'That step does not apply to this order right now.'], busy: [409, 'busy', 'Your plans are already being worked on. Give it a couple of minutes.'] };
+    const spend = async () => ((await capped('reads', 'DAILY_READ_CAP')) ? ERR.cap : '');
     /* The slow call is over: take the order as it is now, and only apply the result if it is still at the step we started from. */
     const finish = async (statuses, apply) => { const now = await db.load(k); if (!now) return fail(404, 'not_found', 'No such order.'); if (statuses.includes(now.status)) apply(now); now.busy = 0; await db.save(k, now); return json({ order: publicView(now) }); };
 
@@ -291,8 +283,8 @@ async function handle(request, env) {
       const text = str(meta.text, 70000), manifest = strs(meta.manifest, MAX_IMAGES).map((x) => x.slice(0, 80)).slice(0, n);
       if (!n && text.length < 40) return fail(400, 'no_pages', 'No readable pages arrived. Try a different PDF.');
       const no = await db.claim(k, open, 'read'); if (no) return fail(...WHY[no]);
-      const pages = Math.min(40, +meta.pages || 0), capped = await spend();
-      if (capped) return finish(open, (x) => { x.aiErr = capped; x.reads = Math.max(0, (x.reads || 1) - 1); });
+      const pages = Math.min(40, +meta.pages || 0), over = await spend();
+      if (over) return finish(open, (x) => { x.aiErr = over; });
       let j = null, err = null;
       try { j = await askClaude(env, n ? [u8.subarray(nl + 1), ',', JSON.stringify({ type: 'text', text: readPrompt(manifest, text) })] : [JSON.stringify({ type: 'text', text: readPrompt([], text) })]); }
       catch (e) { err = ERR[e && e.code] || ERR.upstream; }
@@ -302,10 +294,10 @@ async function handle(request, env) {
       if (o.status !== 'preview' || o.revUsed || !o.params) return fail(409, 'bad_step', 'A change can be asked for once, at the preview.');
       const note = str((await body()).note, 600); if (!note) return fail(400, 'no_note', 'Say what should change.');
       const no = await db.claim(k, ['preview'], 'revise'); if (no) return fail(...WHY[no]);
-      const capped = await spend();
-      let j = null, err = capped;
-      if (!capped) { try { j = await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })]); } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
-      if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(capped ? 429 : 502, 'read_failed', err); }
+      const over = await spend();
+      let j = null, err = over;
+      if (!over) { try { j = await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })]); } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
+      if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(over ? 429 : 502, 'read_failed', err); }
       return finish(['preview'], (x) => { x.revNote = note; applyRead(x, j, pricing, true); });
     }
     if (step === '/hold') {
