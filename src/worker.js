@@ -13,14 +13,33 @@ const IMG_PREFIX = enc.encode('{"type":"image","source":{"type":"base64","media_
 const MAX_IMAGES = 24;
 const MAX_UPLOAD = 26 * 1024 * 1024;
 const MAX_META = 200000;
+const MAX_JSON = 300000;
+const BUSY_MS = 6 * 60 * 1000;
+const MAX_READS_PER_ORDER = 4;
+const READS_PER_IP = 12, ORDERS_PER_IP = 8, PASSCODE_TRIES = 40;
 
 /* ---------- storage: one small strongly consistent store ---------- */
 export class Store extends DurableObject {
   async load(k) { return (await this.ctx.storage.get(k)) ?? null; }
   async save(k, v) { await this.ctx.storage.put(k, v); }
-  async scan(prefix) { const m = await this.ctx.storage.list({ prefix, limit: 500 }); return [...m.values()]; }
-  /* Atomic counter with a ceiling. Returns false once the ceiling is reached. */
+  /* Newest orders first. */
+  async scan(prefix) { const m = await this.ctx.storage.list({ prefix, limit: 3000 }); return [...m.values()].sort((a, b) => b.created - a.created).slice(0, 300); }
+  /* Atomic counters with a ceiling. bump returns false once the ceiling is reached. */
   async bump(k, max) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return false; await this.ctx.storage.put(k, n + 1); return true; }
+  async bumpAll(pairs) {
+    const ns = []; for (const [k, max] of pairs) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return k; ns.push(n); }
+    for (let i = 0; i < pairs.length; i++) await this.ctx.storage.put(pairs[i][0], ns[i] + 1);
+    return '';
+  }
+  /* Claims an order for one slow step (a read or a change) so two cannot run at once. Returns '' when claimed, or why not. */
+  async claim(k, statuses, kind) {
+    const o = await this.ctx.storage.get(k);
+    if (!o || !statuses.includes(o.status)) return 'step';
+    if (o.busy && Date.now() - o.busy < BUSY_MS) return 'busy';
+    if (kind === 'read') { if ((o.reads || 0) >= MAX_READS_PER_ORDER) return 'limit'; o.reads = (o.reads || 0) + 1; }
+    if (kind === 'revise') { if (o.revUsed) return 'step'; o.revUsed = true; }
+    o.busy = Date.now(); await this.ctx.storage.put(k, o); return '';
+  }
 }
 const store = (env) => env.STORE.get(env.STORE.idFromName('main'));
 
@@ -31,6 +50,23 @@ const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 const day = () => new Date().toISOString().slice(0, 10);
 function rid(n, alphabet) { const b = crypto.getRandomValues(new Uint8Array(n)); let s = ''; for (let i = 0; i < n; i++) s += alphabet[b[i] % alphabet.length]; return s; }
 function sameKey(a, b) { a = String(a || ''); b = String(b || ''); if (!a || a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
+/* Visitors are counted per IPv4 address or per IPv6 /64, so rotating within one network does not reset a cap. */
+function ipKey(ip) {
+  if (!ip.includes(':')) return ip;
+  const [h, t = ''] = ip.split('::'), head = h ? h.split(':') : [], tail = t ? t.split(':') : [];
+  const full = ip.includes('::') ? [...head, ...Array(Math.max(0, 8 - head.length - tail.length)).fill('0'), ...tail] : head;
+  return full.slice(0, 4).join(':');
+}
+/* Reads a request body but gives up as soon as it passes max bytes. */
+async function readCapped(request, max) {
+  if (+request.headers.get('content-length') > max) throw { status: 413 };
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader(), chunks = []; let n = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; n += value.length; if (n > max) { await reader.cancel().catch(() => {}); throw { status: 413 }; } chunks.push(value); }
+  if (chunks.length === 1) return chunks[0];
+  const out = new Uint8Array(n); let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
+  return out;
+}
 const strs = (a, n) => (Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x.trim()).slice(0, n).map((x) => x.trim().slice(0, 200)) : []);
 
 function sanitise(j) {
@@ -42,6 +78,8 @@ function sanitise(j) {
     pitch: num(b.pitch, 22.5, 0, 50), eave: num(b.eave, 0.6, 0, 1.5), ridge: ['ew', 'ns'].includes(b.ridge) ? b.ridge : 'auto', high: ['n', 's', 'e', 'w'].includes(b.high) ? b.high : 'n' }; })
     .filter((b) => b.w >= 1 && b.d >= 1);
   if (!blocks.length) return null;
+  const span = (lo, hi) => Math.max(...blocks.map(hi)) - Math.min(...blocks.map(lo));
+  if (span((b) => b.x, (b) => b.x + b.w) > 80 || span((b) => b.y, (b) => b.y + b.d) > 80) return null;
   const scale = [100, 150, 200, 250, 300].includes(+j.scale) ? +j.scale : 'auto';
   return { scale, blocks };
 }
@@ -66,7 +104,7 @@ function totals(o) {
   const ship = o.choice !== 'stl' && o.delivery === 'post' ? o.quote.ship.cost : 0;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
-const publicView = (o) => { const { key, ip, ...rest } = o; return rest; };
+const publicView = (o) => { const { key, ip, busy, reads, ...rest } = o; return rest; };
 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
@@ -161,7 +199,8 @@ const ERR = {
 
 /* ---------- order steps ---------- */
 function applyRead(o, j, pricing, revise) {
-  const params = sanitise(j), conf = Math.max(0, Math.min(1, parseFloat(j && j.confidence) || 0));
+  const params = sanitise(j); if (params) params.scale = 'auto';
+  const conf = Math.max(0, Math.min(1, parseFloat(j && j.confidence) || 0));
   o.ai = { confidence: conf, assumptions: strs(j && j.assumptions, 8), problems: strs(j && j.problems, 8), pages: o.pages || 0, images: o.images || 0, revised: !!revise };
   let q = null;
   if (params && !(j && j.readable === false) && conf >= 0.4) { try { q = quoteFor(params, pricing); } catch (e) { q = null; } }
@@ -173,18 +212,18 @@ function applyRead(o, j, pricing, revise) {
 async function handle(request, env) {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, ''), m = request.method, db = store(env);
   const pricing = { ...DEFAULT_PRICING, ...((await db.load('pricing')) || {}) };
-  const body = async () => { const t = await request.text(); if (t.length > 300000) throw { status: 413 }; try { return JSON.parse(t); } catch (e) { throw { status: 400 }; } };
-  const ip = request.headers.get('cf-connecting-ip') || 'local';
+  const body = async () => { const t = dec.decode(await readCapped(request, MAX_JSON)); try { const v = JSON.parse(t); if (v && typeof v === 'object') return v; } catch (e) { /* fall through */ } throw { status: 400 }; };
+  const ip = ipKey(request.headers.get('cf-connecting-ip') || 'local'), today = day();
+  const cap = (name, dflt) => { const n = parseInt(env[name] || '', 10); return n > 0 ? n : dflt; };
 
   if (path === '/api/config' && m === 'GET') return json({ pricing, post: POST, ready: !!env.ANTHROPIC_API_KEY });
 
   /* ----- owner ----- */
   if (path.startsWith('/api/admin')) {
-    if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) {
-      if (!(await db.bump('adm:' + day() + ':' + ip, 40))) return fail(429, 'cap', 'Too many tries. Come back tomorrow.');
-      return fail(401, 'unauthorised', 'Wrong passcode.');
-    }
-    if (path === '/api/admin/orders' && m === 'GET') { const all = await db.scan('o:'); all.sort((a, b) => b.created - a.created); return json({ orders: all, pricing }); }
+    const tries = 'adm:' + today + ':' + ip;
+    if (((await db.load(tries)) || 0) >= PASSCODE_TRIES) return fail(429, 'cap', 'Too many wrong tries from this connection today. Come back tomorrow.');
+    if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) { await db.bump(tries, PASSCODE_TRIES); return fail(401, 'unauthorised', 'Wrong passcode.'); }
+    if (path === '/api/admin/orders' && m === 'GET') return json({ orders: await db.scan('o:'), pricing });
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
       for (const k of ['min', 'fee', 'perGram', 'stl']) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
@@ -199,8 +238,9 @@ async function handle(request, env) {
       else if (act === 'printing' && o.status === 'accepted') o.status = 'printing';
       else if (act === 'ready' && o.status === 'printing') o.status = 'ready';
       else if (act === 'collected' && o.status === 'ready') o.status = 'collected';
-      else if (act === 'override' && ['received', 'revision', 'unreadable', 'preview'].includes(o.status)) {
-        const params = sanitise(b.params); if (!params) return fail(400, 'bad_params', 'That model has no usable blocks.');
+      else if (act === 'override' && ['received', 'unreadable', 'preview'].includes(o.status)) {
+        if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(409, 'busy', 'This order is being read right now. Try again in a minute.');
+        const params = sanitise(b.params); if (!params) return fail(400, 'bad_params', 'That model has no usable blocks, or is more than 80 m across.');
         const q = quoteFor(params, pricing); if (!q.fits) return fail(400, 'too_big', 'That model does not fit the printer at this scale.');
         o.params = params; o.quote = q; o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.aiErr = null; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup';
       } else return fail(409, 'bad_step', 'That step does not apply to this order right now.');
@@ -214,60 +254,67 @@ async function handle(request, env) {
     const b = await body();
     const name = str(b.name, 80), email = str(b.email, 120), addr = str(b.addr, 120);
     if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !addr) return fail(400, 'bad_form', 'Name, email and street address are needed.');
-    if (!(await db.bump('ip:' + day() + ':' + ip, 8))) return fail(429, 'cap', 'That is a lot of uploads for one day. Try again tomorrow.');
+    const hit = await db.bumpAll([['ip:' + today + ':' + ip, ORDERS_PER_IP], ['orders:' + today, cap('DAILY_ORDER_CAP', 80)]]);
+    if (hit) return fail(429, 'cap', hit.startsWith('ip:') ? 'That is a lot of uploads for one day. Try again tomorrow.' : ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
       name, email, addr, suburb: str(b.suburb, 60), notes: str(b.notes, 600),
       files: (Array.isArray(b.files) ? b.files : []).slice(0, 6).map((f) => ({ name: str(f && f.name, 120), size: +(f && f.size) || 0 })), photos: Math.min(20, +b.photos || 0),
-      status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '',
-      pages: 0, images: 0 };
+      status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '', pages: 0, images: 0, reads: 0, busy: 0 };
     await db.save('o:' + o.id, o);
     return json({ order: publicView(o), key: o.key });
   }
   const om = path.match(/^\/api\/orders\/([A-Z0-9-]{4,12})(\/read|\/revise|\/hold)?$/);
   if (om) {
-    const o = await db.load('o:' + om[1]);
+    const k = 'o:' + om[1], o = await db.load(k);
     if (!o || !sameKey(url.searchParams.get('k'), o.key)) return fail(404, 'not_found', 'That order link is not right. Check it and try again.');
     const step = om[2] || '';
     if (!step && m === 'GET') return json({ order: publicView(o) });
     if (m !== 'POST') return fail(405, 'method', 'Not allowed.');
+    const WHY = { step: [409, 'bad_step', 'That step does not apply to this order right now.'], busy: [409, 'busy', 'Your plans are already being worked on. Give it a couple of minutes.'],
+      limit: [429, 'limit', 'These plans have been tried a few times now. Upload them again as a new order, or try a different PDF.'] };
+    /* Spend guards, checked together: this visitor today, then the whole site today. */
+    const spend = async () => { const hit = await db.bumpAll([['rip:' + today + ':' + ip, READS_PER_IP], ['reads:' + today, cap('DAILY_READ_CAP', 40)]]); return !hit ? '' : hit.startsWith('rip:') ? 'That is a lot of plan reads for one day. Try again tomorrow.' : ERR.cap; };
+    /* The slow call is over: take the order as it is now, and only apply the result if it is still at the step we started from. */
+    const finish = async (statuses, apply) => { const now = await db.load(k); if (!now) return fail(404, 'not_found', 'No such order.'); if (statuses.includes(now.status)) apply(now); now.busy = 0; await db.save(k, now); return json({ order: publicView(now) }); };
 
     if (step === '/read') {
       /* Body: one line of JSON ({manifest, text, pages}), a newline, then the page images. Nothing from the plans is stored. */
-      if (!['received', 'unreadable'].includes(o.status)) return fail(409, 'bad_step', 'These plans have already been read.');
-      if (+request.headers.get('content-length') > MAX_UPLOAD) return fail(413, 'too_big', ERR.too_big);
-      const u8 = new Uint8Array(await request.arrayBuffer());
-      if (u8.length > MAX_UPLOAD) return fail(413, 'too_big', ERR.too_big);
+      const open = ['received', 'unreadable'];
+      if (!open.includes(o.status)) return fail(409, 'bad_step', 'These plans have already been read.');
+      let u8; try { u8 = await readCapped(request, MAX_UPLOAD); } catch (e) { return fail(413, 'too_big', ERR.too_big); }
       const nl = u8.indexOf(10);
       let meta = null;
       if (nl > 0 && nl <= MAX_META) { try { meta = JSON.parse(dec.decode(u8.subarray(0, nl))); } catch (e) { meta = null; } }
       const n = meta && typeof meta === 'object' ? countImages(u8, nl + 1) : -1;
       if (n < 0) return fail(400, 'bad_images', 'The pages did not arrive in one piece. Try again.');
       const text = str(meta.text, 70000), manifest = strs(meta.manifest, MAX_IMAGES).map((x) => x.slice(0, 80)).slice(0, n);
-      if (!n && !text) return fail(400, 'no_pages', 'No readable pages arrived. Try a different PDF.');
-      o.aiErr = null; o.pages = Math.min(40, +meta.pages || 0); o.images = n;
-      if (!(await db.bump('reads:' + day(), parseInt(env.DAILY_READ_CAP || '40', 10)))) { o.aiErr = ERR.cap; await db.save('o:' + o.id, o); return json({ order: publicView(o) }); }
-      try {
-        const prompt = JSON.stringify({ type: 'text', text: readPrompt(n ? manifest : [], text) });
-        applyRead(o, await askClaude(env, n ? [u8.subarray(nl + 1), ',', prompt] : [prompt]), pricing, false);
-      } catch (e) { o.aiErr = ERR[e && e.code] || ERR.upstream; }
-      await db.save('o:' + o.id, o); return json({ order: publicView(o) });
+      if (!n && text.length < 40) return fail(400, 'no_pages', 'No readable pages arrived. Try a different PDF.');
+      const no = await db.claim(k, open, 'read'); if (no) return fail(...WHY[no]);
+      const pages = Math.min(40, +meta.pages || 0), capped = await spend();
+      if (capped) return finish(open, (x) => { x.aiErr = capped; x.reads = Math.max(0, (x.reads || 1) - 1); });
+      let j = null, err = null;
+      try { j = await askClaude(env, n ? [u8.subarray(nl + 1), ',', JSON.stringify({ type: 'text', text: readPrompt(manifest, text) })] : [JSON.stringify({ type: 'text', text: readPrompt([], text) })]); }
+      catch (e) { err = ERR[e && e.code] || ERR.upstream; }
+      return finish(open, (x) => { x.pages = pages; x.images = n; x.aiErr = err; if (j) applyRead(x, j, pricing, false); });
     }
     if (step === '/revise') {
       if (o.status !== 'preview' || o.revUsed || !o.params) return fail(409, 'bad_step', 'A change can be asked for once, at the preview.');
       const note = str((await body()).note, 600); if (!note) return fail(400, 'no_note', 'Say what should change.');
-      if (!(await db.bump('reads:' + day(), parseInt(env.DAILY_READ_CAP || '40', 10)))) return fail(429, 'cap', ERR.cap);
-      o.revNote = note; o.revUsed = true;
-      try { applyRead(o, await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })]), pricing, true); }
-      catch (e) { o.revUsed = false; await db.save('o:' + o.id, o); return fail(502, 'read_failed', ERR[e && e.code] || ERR.upstream); }
-      await db.save('o:' + o.id, o); return json({ order: publicView(o) });
+      const no = await db.claim(k, ['preview'], 'revise'); if (no) return fail(...WHY[no]);
+      const capped = await spend();
+      let j = null, err = capped;
+      if (!capped) { try { j = await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })]); } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
+      if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(capped ? 429 : 502, 'read_failed', err); }
+      return finish(['preview'], (x) => { x.revNote = note; applyRead(x, j, pricing, true); });
     }
     if (step === '/hold') {
       if (o.status !== 'preview' || !o.quote) return fail(409, 'bad_step', 'This order is not at the preview step.');
+      if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(...WHY.busy);
       const b = await body();
       o.choice = b.choice === 'stl' ? 'stl' : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
       Object.assign(o, totals(o)); o.holdAt = Date.now(); o.status = 'hold_placed';
-      await db.save('o:' + o.id, o); return json({ order: publicView(o) });
+      await db.save(k, o); return json({ order: publicView(o) });
     }
   }
   return fail(404, 'not_found', 'Not found.');
@@ -279,7 +326,7 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
     try { return await handle(request, env); }
     catch (e) {
-      if (e && e.status) return fail(e.status, 'bad_request', e.status === 413 ? 'That is too much text for one request.' : 'That request could not be read.');
+      if (e && e.status) return fail(e.status, 'bad_request', e.status === 413 ? 'That is too much for one request.' : 'That request could not be read.');
       console.log('server error', e && (e.stack || e.message || e));
       return fail(500, 'server', 'Something went wrong on the server. Try again.');
     }

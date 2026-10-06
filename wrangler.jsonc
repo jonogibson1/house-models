@@ -6,6 +6,6 @@
   "assets": { "directory": "./public", "binding": "ASSETS" },
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
-  "vars": { "MODEL": "claude-opus-5-5", "DAILY_READ_CAP": "40" },
+  "vars": { "MODEL": "claude-opus-5-5", "DAILY_READ_CAP": "40", "DAILY_ORDER_CAP": "80" },
   "observability": { "enabled": true }
 }

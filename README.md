@@ -31,8 +31,11 @@ Settings in `wrangler.jsonc`:
 |---|---|---|
 | `MODEL` | `claude-opus-5-5` | Model that reads the plans. |
 | `DAILY_READ_CAP` | `40` | Most plan reads and change requests per day, across all visitors. |
+| `DAILY_ORDER_CAP` | `80` | Most new orders per day, across all visitors. |
 
-Other limits in the code: 8 uploads per visitor address per day, 24 images and 26 MB per read, 40 wrong passcode tries per address per day.
+Other limits in the code: per visitor network per day, 8 uploads, 12 plan reads and 40 wrong passcode tries. Per order, 4 read attempts and one change. Per read, 24 images and 26 MB.
+
+Known gap: the 3D preview is built in the browser from the same numbers as the print files, so someone technical could produce the STL from the preview without paying. Fine for a test; a paid launch needs the preview served as a picture or a coarse mesh.
 
 ## Run locally
 

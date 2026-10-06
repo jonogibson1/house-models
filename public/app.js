@@ -32,7 +32,7 @@ function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) r
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
 var cfg = { pricing:{min:200,fee:120,perGram:1.2,stl:45}, ready:true };
-var admin = { key:'', ok:false, orders:[], sel:null, err:'' };
+var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
 var memFrag = {};                                 // the read request for each new order stays in this tab so a failed read can be retried
@@ -298,7 +298,7 @@ function timeline(o){
 function facts(o){
   var q=o.quote;
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Model size</dt><dd>'+q.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
-   +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return p.label.toLowerCase();}).join(', ')+'</dd><dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
+   +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return esc(String(p.label).toLowerCase());}).join(', ')+'</dd><dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
 }
 function ulist(a){ return '<ul class="plain">'+a.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>'; }
 function totalsOf(o, choice, delivery){ var price=choice==='stl'?o.quote.stl:o.quote.print, ship=(choice!=='stl' && delivery==='post')?o.quote.ship.cost:0; return { price:price, ship:ship, total:price+ship }; }
@@ -431,11 +431,11 @@ function blockEditor(params){
         }).join('')+'</div></fieldset>';
   }).join('');
 }
-function flagList(flags){ return '<ul class="flags">'+flags.map(function(f){ return '<li class="'+f.lvl+'">'+esc(f.text)+'</li>'; }).join('')+'</ul>'; }
+function flagList(flags){ return '<ul class="flags">'+flags.map(function(f){ return '<li class="'+esc(f.lvl)+'">'+esc(f.text)+'</li>'; }).join('')+'</ul>'; }
 function estFromBuild(r){ var sh=shipFor(r); return { scale:r.scale, size:r.size, grams:Math.ceil(r.grams), hours:r.hours, parts:r.parts, print:printPrice(r), stl:cfg.pricing.stl, ship:sh, flags:r.flags, fits:r.fits }; }
 function estTable(q){
   var sh=q.ship;
-  return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Size</dt><dd>'+q.size.map(function(v){return (+v).toFixed(1);}).join(' x ')+' mm</dd><dt>Parts</dt><dd>'+q.parts.length+' ('+q.parts.map(function(p){return p.name;}).join(', ')+')</dd>'
+  return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Size</dt><dd>'+q.size.map(function(v){return (+v).toFixed(1);}).join(' x ')+' mm</dd><dt>Parts</dt><dd>'+q.parts.length+' ('+q.parts.map(function(p){return esc(p.name);}).join(', ')+')</dd>'
    +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+'</dd><dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
    +'<dt>Post box</dt><dd>'+sh.box.join(' x ')+' mm</dd><dt>Post weight</dt><dd>'+Math.round(sh.actual*1000)+' g actual, '+Math.round(sh.cubic*1000)+' g cubic</dd><dt>Postage</dt><dd>'+money2(sh.cost)+'</dd></dl>';
 }
@@ -448,10 +448,16 @@ function aiBlock(o){
 }
 function aorder(id){ for(var i=0;i<admin.orders.length;i++) if(admin.orders[i].id===id) return admin.orders[i]; return null; }
 function loadQueue(quiet){
+  var gen=admin.gen;                                // a reply that lands after the queue was locked or re-opened is dropped
   return api('GET','/api/admin/orders').then(function(r){
+    if(gen!==admin.gen) return;
     admin.ok=true; admin.err=''; admin.orders=r.orders; cfg.pricing=r.pricing; try{ sessionStorage.setItem('fhm-owner',admin.key); }catch(e){}
     if(!ui.edit || !quiet) renderQueue();
-  }, function(e){ if(e.status===401){ admin.ok=false; admin.err=admin.key?'That passcode is not right.':''; admin.key=''; try{ sessionStorage.removeItem('fhm-owner'); }catch(_){} renderQueue(); } else if(!quiet) toast(e.message); });
+  }, function(e){
+    if(gen!==admin.gen) return;
+    if(e.status===401 || e.status===429){ admin.ok=false; admin.err=e.status===429?e.message:(admin.key?'That passcode is not right.':''); admin.key=''; try{ sessionStorage.removeItem('fhm-owner'); }catch(_){} renderQueue(); }
+    else if(!quiet) toast(e.message);
+  });
 }
 var qPollT=null;
 function showQueue(){
@@ -461,6 +467,7 @@ function showQueue(){
   qPollT=setInterval(function(){ if(!document.hidden && current==='queue' && admin.ok && !ui.edit && !document.querySelector('#queue-root details[open]')) loadQueue(true); }, 15000);
 }
 function act(o, body, done){
+  admin.gen++;
   api('POST','/api/admin/orders/'+o.id, body).then(function(r){ for(var i=0;i<admin.orders.length;i++) if(admin.orders[i].id===o.id) admin.orders[i]=r.order; ui.edit=null; renderQueue(); if(done) toast(done); }, function(e){ toast(e.message); });
 }
 var edT;
@@ -470,7 +477,7 @@ function renderQueue(){
     root.innerHTML='<form id="own-f" class="stack" style="max-width:420px"><span class="eyebrow">Owner</span><h2>Jono\'s queue</h2><p class="muted">This part of the site is for the owner.</p>'
       +'<div class="field"><label for="own-key">Passcode</label><input type="password" id="own-key" autocomplete="current-password"></div>'
       +(admin.err?'<p class="err" role="alert">'+esc(admin.err)+'</p>':'')+'<div class="row"><button class="btn" type="submit">Open the queue</button></div></form>';
-    $('#own-f').addEventListener('submit',function(e){ e.preventDefault(); admin.key=$('#own-key').value.trim(); if(admin.key) loadQueue(); });
+    $('#own-f').addEventListener('submit',function(e){ e.preventDefault(); admin.gen++; admin.key=$('#own-key').value.trim(); if(admin.key) loadQueue(); });
     return;
   }
   if(!admin.sel || !aorder(admin.sel)) admin.sel = admin.orders.length ? admin.orders[0].id : null;
@@ -528,7 +535,7 @@ function renderQueue(){
   var showP = o && (ui.edit && ui.edit.id===o.id ? ui.edit.params : o.params);
   if(showP && $('#stage-queue')){ var v=viewer('queue'); v.mount($('#stage-queue')); v.set(built(showP,0.8)); }
   $$('[data-sel]',root).forEach(function(b){ b.addEventListener('click',function(){ admin.sel=this.getAttribute('data-sel'); ui.edit=null; renderQueue(); }); });
-  $('#own-out').addEventListener('click',function(){ admin.ok=false; admin.key=''; admin.orders=[]; try{ sessionStorage.removeItem('fhm-owner'); }catch(e){} renderQueue(); });
+  $('#own-out').addEventListener('click',function(){ admin.gen++; admin.ok=false; admin.key=''; admin.orders=[]; try{ sessionStorage.removeItem('fhm-owner'); }catch(e){} renderQueue(); });
   var eo=$('#ed-open'); if(eo) eo.addEventListener('click',function(){ ui.edit={ id:o.id, params:o.params?clone(o.params):{scale:'auto',blocks:[{name:'Main house',x:0,y:0,w:12,d:8,storeys:1,storeyH:2.7,roof:'hip',pitch:22.5,eave:0.6,ridge:'auto',high:'n'}]} }; renderQueue(); });
   function refresh(){ var r=built(ui.edit.params,0.8), q=estFromBuild(r); $('#ed-out').innerHTML=flagList(q.flags)+estTable(q); $('#ed-send').disabled=!q.fits; viewer('queue').set(r); }
   var eb=$('#ed-blocks');
