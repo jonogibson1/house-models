@@ -18,9 +18,12 @@ document.addEventListener('click',function(e){
   try{ navigator.clipboard.writeText(inp.value).then(function(){ toast('Link copied.'); }, fallback); }catch(_){ fallback(); }
 });
 
+/* Sample on the home page: a typical single-storey brick home, about 19 x 9 m, hip roof at 22.5 degrees, garage at the front. */
 var SAMPLE = { scale:'auto', blocks:[
-  {name:'Main house',x:0,y:0,w:14,d:9,storeys:1,storeyH:2.7,roof:'hip',pitch:22.5,eave:0.6,ridge:'auto',high:'n'},
-  {name:'Garage wing',x:9,y:-5,w:6,d:9,storeys:1,storeyH:2.7,roof:'gable',pitch:22.5,eave:0.6,ridge:'ns',high:'n'} ]};
+  {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n'},
+  {name:'Garage and porch',x:11.51,y:3.83,w:7.44,d:4.92,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n'} ]};
+function treeOf(params){ var t=clone(params); t.ornament=true; return t; }
+function itemName(c){ return c==='stl'?'STL files':c==='tree'?'Christmas tree version':'Printed model'; }
 
 /* ---------- state: orders live on the server; this browser only remembers which ones are its own ---------- */
 var LS='fhm-live-v1';
@@ -31,7 +34,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:200,fee:120,perGram:1.2,stl:45}, ready:true };
+var cfg = { pricing:{min:200,fee:120,perGram:1.2,stl:45,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
@@ -126,8 +129,16 @@ Viewer.prototype.set=function(result){
   var land = result.size[0] >= result.size[1], aw=land?210:148, ah=land?148:210;
   var pts=[[-aw/2,-ah/2],[aw/2,-ah/2],[aw/2,ah/2],[-aw/2,ah/2],[-aw/2,-ah/2]].map(function(p){ return new THREE.Vector3(p[0],p[1],0.05); });
   this.deco.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--rule'))})));
-  this.dist=Math.max(190,Math.max(result.size[0],result.size[1],result.size[2]*2)*1.95);
-  this.target=result.size[2]*0.35;
+  /* A standard 375 ml drink can beside the model, for size: 66 mm across, 122 mm tall. */
+  var can=new THREE.Group(), R=33, CH=122;
+  function cyl(r1,r2,h,z,col,metal){ var c=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,48), new THREE.MeshStandardMaterial({color:col,roughness:metal?0.35:0.5,metalness:metal?0.7:0.1})); c.rotation.x=Math.PI/2; c.position.z=z+h/2; can.add(c); }
+  cyl(R-3,R-6,5,0,0xc9ccd1,true); cyl(R,R-3,4,5,0xc9ccd1,true); cyl(R,R,CH-20,9,0xc8102e,false); cyl(R*0.98,R*0.98,6,CH-15,0xf2f2f2,false);
+  cyl(R-4,R,4,CH-9,0xc9ccd1,true); cyl(R-5,R-4,5,CH-5,0xc9ccd1,true);
+  can.position.set(cx+R+22, -cy+R, 0); this.deco.add(can);
+  var wide=result.size[0]+2*R+22;
+  this.dist=Math.max(250,Math.max(wide*1.15,result.size[1],CH*1.55)*1.85);
+  this.target=CH*0.3;
+  this.model.position.x=-(2*R+22)/2; can.position.x+=-(2*R+22)/2;
   this.place(); this.draw();
 };
 Viewer.prototype.place=function(){ if(!this.ok) return; var ex=this.explode; this.model.children.forEach(function(m){ var p=m.userData.part; m.position.z=p.z0+(ex&&p.kind==='roof'?14:0); }); };
@@ -165,14 +176,23 @@ var PIC_SVG = '<svg viewBox="0 0 300 240" role="img" aria-label="Drawing of a 3D
  + '<rect x="86" y="160" width="128" height="9" rx="2" fill="var(--mat)"/>'
  + '<path d="M118 160v-22h64v22z" fill="var(--wall)" stroke="var(--ink)" stroke-width="1.5"/><path d="M112 140l38-22 38 22z" fill="var(--roof)"/>'
  + '<circle cx="228" cy="48" r="4" fill="var(--rule)"/></svg>';
+var home = { tree:false };
+document.addEventListener('click',function(e){ var b=e.target.closest('[data-hero]'); if(!b) return; home.tree = b.getAttribute('data-hero')==='tree'; renderHome(); });
 function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   $('#price-print').textContent='From '+money(p.min);
   $('#price-print-note').textContent='For most single-storey homes, including the sample above. Larger homes use more filament and cost a little more. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
   $('#price-stl').textContent=money(p.stl);
+  $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
+  var tr=built(treeOf(SAMPLE),0.8);
+  $('#price-tree-note').textContent='Your house again at about 1:'+tr.scale+', small enough to hang on the tree: the sample is '+Math.round(tr.size[0])+' mm across. Comes with a ribbon through the roof. Same preview, same hold, same pickup or post.';
+  var heroTree = home.tree;
+  $$('[data-hero]').forEach(function(b){ b.setAttribute('aria-pressed', String((b.getAttribute('data-hero')==='tree')===heroTree)); });
   $$('.from-price').forEach(function(el){ el.textContent=money(p.min); });
   $('#about-pic').innerHTML=PIC_SVG;
-  var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(r);
+  var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
+  $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
+    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can and the yellow outline an A5 page. Drag to turn it.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -186,24 +206,52 @@ function loadImage(file){ return new Promise(function(res,rej){ var u=URL.create
 async function prep(files, photos, prog){
   var maxN=20, docs=[], total=0, i;
   for(i=0;i<files.length;i++){ var buf=new Uint8Array(await files[i].arrayBuffer()); var doc=await window.pdfjsLib.getDocument({data:buf}).promise; docs.push(doc); total+=doc.numPages; }
-  var pages=Math.min(total,12), per = maxN>=pages*5 ? 5 : maxN>=pages*3 ? 3 : 1;
-  if(per===1) pages=Math.min(pages,maxN);
-  var images=[], manifest=[], lines=[], n=0;
-  for(var d=0; d<docs.length && n<pages; d++){
-    for(var p=1; p<=docs[d].numPages && n<pages; p++){
-      n++; prog('Opening your plans, page '+n+' of '+pages);
-      var page=await docs[d].getPage(p), v0=page.getViewport({scale:1}), sc=Math.min(4,2400/Math.max(v0.width,v0.height)), vp=page.getViewport({scale:sc});
+  /* Real plan sets run to 20 or more sheets. Rank each sheet by its words, keep the floor plan, elevations and roof plan
+     at full detail, and drop electrical, detail and similar sheets that say nothing about the outside shape. */
+  /* Sheet titles are set in big type, so the big words on each sheet decide what it is. */
+  var W=[[/(^|[^b])floor\s*plan/g,8],[/roof\s*plan/g,7],[/elevation/g,6],[/section/g,3],[/site\s*plan/g,1],
+    [/internal|interior|electrical|lighting|bracing|tie\s*down|sub\s*floor|floor\s*covering|detail|landscap|slab\s*(plan|layout)|drainage|cover\s*sheet|schedule|joinery/g,-7]];
+  var all=[], at=0;
+  for(var d0=0; d0<docs.length; d0++) for(var p0=1; p0<=docs[d0].numPages; p0++){
+    at++; prog('Looking through your plans, sheet '+at+' of '+total);
+    var words='', sc0=0;
+    try{
+      var it0=(await (await docs[d0].getPage(p0)).getTextContent()).items.filter(function(t){ return (t.str||'').trim(); });
+      var hs=it0.map(function(t){ return Math.hypot(t.transform[2],t.transform[3]); }).sort(function(a,b){ return a-b; }), med=hs[Math.floor(hs.length/2)]||0;
+      words=it0.filter(function(t){ return Math.hypot(t.transform[2],t.transform[3])>=med*1.8; }).map(function(t){ return t.str; }).join(' / ').toLowerCase();
+    }catch(e){}
+    W.forEach(function(w){ var m=words.match(w[0]); if(m) sc0+=w[1]*Math.min(m.length,2); });
+    all.push({d:d0,p:p0,no:at,score:sc0});
+  }
+  var ranked=all.slice().sort(function(a,b){ return b.score-a.score || a.no-b.no; });
+  var good=ranked.filter(function(x){ return x.score>0; });
+  var pick, used;
+  if(good.length>=2){
+    pick=good.slice(0,Math.min(8,maxN)); used=pick.length; pick.forEach(function(x){ x.per=1; });
+    for(var k0=0;k0<pick.length;k0++){ if(pick[k0].score>=6 && used+4<=maxN){ pick[k0].per=5; used+=4; } }
+  } else {
+    /* No readable sheet titles: send the first sheets in order, as much detail as fits. */
+    pick=all.slice(0,12); var per0 = maxN>=pick.length*5 ? 5 : 1; if(per0===1) pick=pick.slice(0,maxN);
+    pick.forEach(function(x){ x.per=per0; });
+  }
+  pick.sort(function(a,b){ return a.no-b.no; });
+  var pages=pick.length, images=[], manifest=[], lines=[], n=0;
+  for(var q0=0; q0<pick.length; q0++){
+    var d=pick[q0].d, p=pick[q0].p, per=pick[q0].per;
+    {
+      n++; prog('Opening your plans, sheet '+n+' of '+pages);
+      var page=await docs[d].getPage(p), v0=page.getViewport({scale:1}), sc=Math.min(4,(per===5?2400:1800)/Math.max(v0.width,v0.height)), vp=page.getViewport({scale:sc});
       var c=document.createElement('canvas'); c.width=Math.round(vp.width); c.height=Math.round(vp.height);
       var ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height);
       await page.render({canvasContext:ctx,viewport:vp}).promise;
       var w=c.width, h=c.height, ov=0.08;
-      images.push(part(c,0,0,w,h,1300)); manifest.push('page '+n+', whole sheet');
+      images.push(part(c,0,0,w,h,1300)); manifest.push('sheet '+pick[q0].no+' of '+total+', whole sheet');
       if(per===5){
         var qw=Math.round(w*(0.5+ov)), qh=Math.round(h*(0.5+ov));
-        images.push(part(c,0,0,qw,qh)); manifest.push('page '+n+', top-left quarter enlarged');
-        images.push(part(c,w-qw,0,qw,qh)); manifest.push('page '+n+', top-right quarter enlarged');
-        images.push(part(c,0,h-qh,qw,qh)); manifest.push('page '+n+', bottom-left quarter enlarged');
-        images.push(part(c,w-qw,h-qh,qw,qh)); manifest.push('page '+n+', bottom-right quarter enlarged');
+        images.push(part(c,0,0,qw,qh)); manifest.push('sheet '+pick[q0].no+', top-left quarter enlarged');
+        images.push(part(c,w-qw,0,qw,qh)); manifest.push('sheet '+pick[q0].no+', top-right quarter enlarged');
+        images.push(part(c,0,h-qh,qw,qh)); manifest.push('sheet '+pick[q0].no+', bottom-left quarter enlarged');
+        images.push(part(c,w-qw,h-qh,qw,qh)); manifest.push('sheet '+pick[q0].no+', bottom-right quarter enlarged');
       } else if(per===3){
         if(w>=h){ var hw=Math.round(w*(0.5+ov)); images.push(part(c,0,0,hw,h)); manifest.push('page '+n+', left half enlarged'); images.push(part(c,w-hw,0,hw,h)); manifest.push('page '+n+', right half enlarged'); }
         else { var hh=Math.round(h*(0.5+ov)); images.push(part(c,0,0,w,hh)); manifest.push('page '+n+', top half enlarged'); images.push(part(c,0,h-hh,w,hh)); manifest.push('page '+n+', bottom half enlarged'); }
@@ -213,7 +261,7 @@ async function prep(files, photos, prog){
         for(var k=0;k<tc.items.length && cnt<350;k++){
           var str=(tc.items[k].str||'').trim(); if(!str) continue;
           var t=window.pdfjsLib.Util.transform(vp.transform, tc.items[k].transform);
-          lines.push('p'+n+' x'+(t[4]/vp.width).toFixed(3)+' y'+(t[5]/vp.height).toFixed(3)+' '+JSON.stringify(str.slice(0,60))); cnt++;
+          lines.push('p'+pick[q0].no+' x'+(t[4]/vp.width).toFixed(3)+' y'+(t[5]/vp.height).toFixed(3)+' '+JSON.stringify(str.slice(0,60))); cnt++;
         }
       }catch(e){}
       c.width=c.height=0;
@@ -295,13 +343,17 @@ function timeline(o){
   var fin = o.status==='collected'||o.status==='delivered'||o.status==='ready';
   return '<ol class="tl">'+steps.map(function(s,i){ return '<li class="'+(i<at||(fin&&i===at)?'done':i===at?'now':'')+'">'+s+'</li>'; }).join('')+'</ol>';
 }
-function facts(o){
+function facts(o, choice){
   var q=o.quote;
+  if(choice==='tree' && q.tree) return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.tree.scale+'</dd><dt>Size</dt><dd>'+q.tree.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
+   +'<dt>Hanging</dt><dd>ribbon through a hole in the roof</dd><dt>Filament</dt><dd>about '+q.tree.grams+' g</dd></dl>';
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Model size</dt><dd>'+q.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
    +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return esc(String(p.label).toLowerCase());}).join(', ')+'</dd><dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
 }
 function ulist(a){ return '<ul class="plain">'+a.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>'; }
-function totalsOf(o, choice, delivery){ var price=choice==='stl'?o.quote.stl:o.quote.print, ship=(choice!=='stl' && delivery==='post')?o.quote.ship.cost:0; return { price:price, ship:ship, total:price+ship }; }
+function shipOf(o, choice){ return choice==='tree' && o.quote.tree ? o.quote.tree.ship : o.quote.ship; }
+function totalsOf(o, choice, delivery){ var tr=choice==='tree' && o.quote.tree, price=choice==='stl'?o.quote.stl:tr?o.quote.tree.price:o.quote.print, ship=(choice!=='stl' && delivery==='post')?shipOf(o,choice).cost:0; return { price:price, ship:ship, total:price+ship }; }
+function modelFor(o){ return o.choice==='tree' && o.quote && o.quote.tree ? treeOf(o.params) : o.params; }
 var pollT=null;
 function showOrder(){
   clearInterval(pollT);
@@ -341,7 +393,7 @@ function renderOrder(){
     var rg=$('#read-go'); if(rg) rg.addEventListener('click',function(){ readNow(o.id); });
     return;
   }
-  var r=built(o.params,0.8), q=o.quote, sh=q.ship;
+  var r=built(modelFor(o),0.8), q=o.quote, sh=shipOf(o,o.choice);
   if(o.status==='preview' && ui.pay){
     var t=totalsOf(o,o.choice,o.delivery);
     h=head+'<div class="split" style="margin-top:22px"><div class="stack"><span class="eyebrow">Step 3 of 4</span><h3>Card hold</h3>'
@@ -350,9 +402,9 @@ function renderOrder(){
      +'<div class="field"><label for="pay-num">Card number</label><input type="text" id="pay-num" class="mono" value="4242 4242 4242 4242" readonly></div>'
      +'<div class="grid2"><div class="field"><label for="pay-exp">Expiry</label><input type="text" id="pay-exp" class="mono" value="12 / 34" readonly></div><div class="field"><label for="pay-cvc">CVC</label><input type="text" id="pay-cvc" class="mono" value="123" readonly></div></div></div>'
      +'<div class="row"><button class="btn" id="pay-go">Place hold of '+money2(t.total)+'</button><button class="btn ghost" id="pay-back">Back to preview</button></div></div>'
-     +'<div class="card stack"><h3>Your order</h3><dl class="spec"><dt>Item</dt><dd>'+(o.choice==='stl'?'STL files':'Printed model, 1:'+q.scale)+'</dd><dt>House</dt><dd>'+esc(o.addr)+'</dd>'
+     +'<div class="card stack"><h3>Your order</h3><dl class="spec"><dt>Item</dt><dd>'+(o.choice==='stl'?'STL files':o.choice==='tree'?'Christmas tree version, 1:'+q.tree.scale:'Printed model, 1:'+q.scale)+'</dd><dt>House</dt><dd>'+esc(o.addr)+'</dd>'
      +'<dt>Handover</dt><dd>'+(o.choice==='stl'?'Download here':o.delivery==='post'?'Australia Post to '+esc(o.addr)+(o.suburb?', '+esc(o.suburb):''):'Pickup, Ferny Hills')+'</dd></dl>'
-     +'<div class="totals"><span>'+(o.choice==='stl'?'STL files':'Model')+'</span><span>'+money2(t.price)+'</span>'+(o.choice==='stl'?'':'<span>'+(o.delivery==='post'?'Postage, Parcel Post':'Pickup')+'</span><span>'+money2(t.ship)+'</span>')
+     +'<div class="totals"><span>'+itemName(o.choice)+'</span><span>'+money2(t.price)+'</span>'+(o.choice==='stl'?'':'<span>'+(o.delivery==='post'?'Postage, Parcel Post':'Pickup')+'</span><span>'+money2(t.ship)+'</span>')
      +'<span class="t">Total</span><span class="t">'+money2(t.total)+'</span></div></div></div>';
     root.innerHTML=h;
     $('#pay-back').addEventListener('click',function(){ ui.pay=false; renderOrder(); });
@@ -365,10 +417,11 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape and roof your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o)
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape and roof your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
-     +'<div class="choice" role="radiogroup" aria-label="What would you like?">'
+     +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
      +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in two colours at 1:'+q.scale+'. Yours to keep.</span></label>'
+     +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
      +'<label><input type="radio" name="dv" id="dv-pickup" value="pickup"'+(dv==='pickup'?' checked':'')+'><span class="lab">Pickup, Ferny Hills</span><span class="price">Free</span><span class="muted small">Jono messages you a time.</span></label>'
@@ -387,12 +440,12 @@ function renderOrder(){
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
-  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The yellow outline is an A5 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
+  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The can beside it is a standard 375 ml drink can, for size. The yellow outline is an A5 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
   var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
-  $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ o.choice=this.value; $('#dv-box').hidden=this.value==='stl'; }); });
+  $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ var dv=$('#dv-post'); o.choice=this.value; if(dv) o.delivery=dv.checked?'post':'pickup'; renderOrder(); var f=$('#ch-'+o.choice); if(f) f.focus({preventScroll:true}); }); });
   $$('input[name=dv]',root).forEach(function(i){ i.addEventListener('change',function(){ o.delivery=this.value; }); });
-  var tp=$('#to-pay'); if(tp) tp.addEventListener('click',function(){ o.choice=($('#ch-stl').checked?'stl':'print'); o.delivery=($('#dv-post').checked?'post':'pickup'); ui.pay=true; renderOrder(); window.scrollTo(0,0); });
+  var tp=$('#to-pay'); if(tp) tp.addEventListener('click',function(){ o.choice=($('#ch-stl').checked?'stl':$('#ch-tree')&&$('#ch-tree').checked?'tree':'print'); o.delivery=($('#dv-post').checked?'post':'pickup'); ui.pay=true; renderOrder(); window.scrollTo(0,0); });
   var rs=$('#rev-send'); if(rs) rs.addEventListener('click',function(){
     var n=$('#rev-note').value.trim(); if(!n){ toast('Say what should change first.'); return; }
     ui.busy='revise'; renderOrder();
@@ -405,15 +458,16 @@ function renderOrder(){
 function saveZip(o){
   toast('Building print files at full detail...');
   setTimeout(function(){
-    var r=G.build(o.params,0.5), enc=new TextEncoder();
+    var tree=o.choice==='tree', r=G.build(tree?treeOf(o.params):o.params,0.5), enc=new TextEncoder();
     var files=r.parts.map(function(p){ return {name:p.name+'.stl',data:G.stl(p.tris)}; });
-    var notes='House model '+o.id+'\r\n'+o.addr+'\r\nScale 1:'+r.scale+'\r\nSize '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled\r\n\r\n'
+    var notes=(tree?'Christmas tree version ':'House model ')+o.id+'\r\n'+o.addr+'\r\nScale 1:'+r.scale+'\r\nSize '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled\r\n\r\n'
       +'Print each STL as loaded, flat side down. No supports. 0.2 mm layers, 2 walls, 10 to 15 percent infill.\r\n'
-      +'Walls in a light colour, roof in a dark one. The roof drops onto the pegs on top of the walls.\r\n'
+      +(tree?'Walls in a light colour, roof in a dark one. Thread a ribbon down through the hole in the roof and the walls, knot it under the walls, and add a dab of glue between roof and walls.\r\n'
+        :'Walls in a light colour, roof in a dark one. The roof drops onto the pegs on top of the walls.\r\n')
       +'Estimated filament: '+Math.ceil(r.grams)+' g. Estimated print time: '+r.hours.toFixed(1)+' h. Both are rough figures; the slicer has the real ones.\r\n';
     files.push({name:'README.txt',data:enc.encode(notes)});
     var url=URL.createObjectURL(new Blob([G.zip(files)],{type:'application/zip'})), a=document.createElement('a');
-    a.href=url; a.download='house-model-'+o.id+'.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },4000);
+    a.href=url; a.download=(tree?'tree-model-':'house-model-')+o.id+'.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },4000);
   },60);
 }
 
@@ -436,7 +490,7 @@ function estFromBuild(r){ var sh=shipFor(r); return { scale:r.scale, size:r.size
 function estTable(q){
   var sh=q.ship;
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Size</dt><dd>'+q.size.map(function(v){return (+v).toFixed(1);}).join(' x ')+' mm</dd><dt>Parts</dt><dd>'+q.parts.length+' ('+q.parts.map(function(p){return esc(p.name);}).join(', ')+')</dd>'
-   +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+'</dd><dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
+   +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+'</dd>'+(q.tree?'<dt>Tree version</dt><dd>'+money(q.tree.price)+', 1:'+q.tree.scale+', about '+q.tree.grams+' g</dd>':'')+'<dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
    +'<dt>Post box</dt><dd>'+sh.box.join(' x ')+' mm</dd><dt>Post weight</dt><dd>'+Math.round(sh.actual*1000)+' g actual, '+Math.round(sh.cubic*1000)+' g cubic</dd><dt>Postage</dt><dd>'+money2(sh.cost)+'</dd></dl>';
 }
 function aiBlock(o){
@@ -490,6 +544,7 @@ function renderQueue(){
     +'<div class="field"><label for="set-fee">Making fee A$</label><input type="number" id="set-fee" value="'+p.fee+'"></div>'
     +'<div class="field"><label for="set-g">Filament A$ per gram</label><input type="number" step="0.05" id="set-g" value="'+p.perGram+'"></div>'
     +'<div class="field"><label for="set-stl">STL files A$</label><input type="number" id="set-stl" value="'+p.stl+'"></div>'
+    +'<div class="field"><label for="set-tree">Christmas tree version A$</label><input type="number" id="set-tree" value="'+(p.tree!=null?p.tree:60)+'"></div>'
     +'<div class="row"><button type="button" class="btn sm" id="set-save">Save prices</button></div>'
     +'<p class="muted small">New prices apply to previews made from now on. Postage uses Australia Post Parcel Post rates for own packaging as at 1 July 2026: '+POST.map(function(b){ return 'up to '+(b[0]<1?b[0]*1000+' g':b[0]+' kg')+' '+money2(b[1]); }).join(', ')+'. Box is the model plus 20 mm padding each side, plus 150 g of packaging, charged on the greater of actual and cubic weight.</p>'
     +'</div></details>';
@@ -499,7 +554,7 @@ function renderQueue(){
     d='<div class="row" style="justify-content:space-between"><div class="stack tight"><span class="eyebrow">Order <span class="mono">'+o.id+'</span></span><h2>'+esc(o.name)+'</h2></div>'+pill(o)+'</div>'
      +'<dl class="spec" style="margin-top:14px"><dt>House</dt><dd>'+esc(o.addr)+(o.suburb?', '+esc(o.suburb):'')+'</dd><dt>Email</dt><dd>'+esc(o.email)+'</dd><dt>Plans</dt><dd>'+(o.files||[]).map(function(f){return esc(f.name)+(f.size?' ('+kb(f.size)+')':'');}).join('<br>')+'</dd>'
      +'<dt>Photos</dt><dd>'+(o.photos||0)+'</dd>'+(o.notes?'<dt>Notes</dt><dd>'+esc(o.notes)+'</dd>':'')+(o.revNote?'<dt>Change asked</dt><dd>'+esc(o.revNote)+'</dd>':'')
-     +(o.total!=null?'<dt>Ordered</dt><dd>'+(o.choice==='stl'?'STL files':'Printed model')+', '+money2(o.price)+(o.choice==='stl'?'':(o.delivery==='post'?' plus '+money2(o.ship)+' postage':', pickup'))+'</dd><dt>Total held</dt><dd>'+money2(o.total)+'</dd>':'')+'</dl>';
+     +(o.total!=null?'<dt>Ordered</dt><dd>'+itemName(o.choice)+', '+money2(o.price)+(o.choice==='stl'?'':(o.delivery==='post'?' plus '+money2(o.ship)+' postage':', pickup'))+'</dd><dt>Total held</dt><dd>'+money2(o.total)+'</dd>':'')+'</dl>';
     var early = o.status==='received'||o.status==='revision'||o.status==='unreadable';
     var editing = ui.edit && ui.edit.id===o.id;
     var stage='<div class="stagebox" style="margin-top:18px"><div class="stage" id="stage-queue"></div></div>';
@@ -532,7 +587,7 @@ function renderQueue(){
     }
   }
   root.innerHTML='<div class="stack tight" style="margin-bottom:20px"><span class="eyebrow">Owner view</span><h2>Jono\'s queue</h2><p class="muted">Plans are read and modelled without you. Your jobs: accept or decline, then print and hand over.</p></div><div class="queue"><div>'+list+settings+'<div class="row" style="margin-top:14px"><button type="button" class="btn ghost sm" id="own-out">Lock the queue</button></div></div><div class="card">'+d+'</div></div>';
-  var showP = o && (ui.edit && ui.edit.id===o.id ? ui.edit.params : o.params);
+  var showP = o && (ui.edit && ui.edit.id===o.id ? ui.edit.params : o.params && modelFor(o));
   if(showP && $('#stage-queue')){ var v=viewer('queue'); v.mount($('#stage-queue')); v.set(built(showP,0.8)); }
   $$('[data-sel]',root).forEach(function(b){ b.addEventListener('click',function(){ admin.sel=this.getAttribute('data-sel'); ui.edit=null; renderQueue(); }); });
   $('#own-out').addEventListener('click',function(){ admin.gen++; admin.ok=false; admin.key=''; admin.orders=[]; try{ sessionStorage.removeItem('fhm-owner'); }catch(e){} renderQueue(); });
@@ -552,7 +607,7 @@ function renderQueue(){
   var dc=$('#q-decline'); if(dc) dc.addEventListener('click',function(){ act(o,{action:'decline',reason:$('#q-reason').value},'Declined. Hold released (test).'); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
   $('#set-save').addEventListener('click',function(){
-    api('PUT','/api/admin/pricing',{min:$('#set-min').value,fee:$('#set-fee').value,perGram:$('#set-g').value,stl:$('#set-stl').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
+    api('PUT','/api/admin/pricing',{min:$('#set-min').value,fee:$('#set-fee').value,perGram:$('#set-g').value,stl:$('#set-stl').value,tree:$('#set-tree').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
   });
 }
 

@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
   var BED = { x: 340, y: 320, z: 340 };
-  var K = { fascia: 0.6, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0 };
+  var K = { fascia: 0.6, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0, hole: 3.2, ornament: 75 };
   function q(v) { return Math.round(v * 1e4) / 1e4; }
 
   function toBlocks(p) {
@@ -203,12 +203,36 @@
     return best;
   }
 
+  /* Christmas tree version: the smallest standard scale that keeps the longest side under about 75 mm. */
+  function ornamentScale(p) {
+    var opts = [200, 250, 300, 350, 400, 450, 500, 600, 750, 1000];
+    for (var k = 0; k < opts.length; k++) {
+      var bl = toBlocks({ scale: opts[k], blocks: p.blocks }), w = 0, d = 0;
+      bl.forEach(function (b) { w = Math.max(w, b.rx1); d = Math.max(d, b.ry1); });
+      if (Math.max(w, d) <= K.ornament) return opts[k];
+    }
+    return 1000;
+  }
+  /* Where the hanging hole goes: the area-weighted middle of the plan, moved to the middle of the biggest block if it lands outside the walls. */
+  function holeAt(bl) {
+    var a = 0, sx = 0, sy = 0, big = bl[0], m = K.hole / 2 + 1.2;
+    bl.forEach(function (b) { var ar = (b.x1 - b.x0) * (b.y1 - b.y0); a += ar; sx += ar * (b.x0 + b.x1) / 2; sy += ar * (b.y0 + b.y1) / 2; if (ar > (big.x1 - big.x0) * (big.y1 - big.y0)) big = b; });
+    var cx = q(sx / a), cy = q(sy / a);
+    var inside = bl.some(function (b) { return cx > b.x0 + m && cx < b.x1 - m && cy > b.y0 + m && cy < b.y1 - m; });
+    if (!inside) { cx = q((big.x0 + big.x1) / 2); cy = q((big.y0 + big.y1) / 2); }
+    return { cx: cx, cy: cy, x0: q(cx - K.hole / 2), x1: q(cx + K.hole / 2), y0: q(cy - K.hole / 2), y1: q(cy + K.hole / 2) };
+  }
+
   function build(p, res) {
-    var scale = p.scale === 'auto' || !p.scale ? pickScale(p) : +p.scale;
+    var orn = !!p.ornament;
+    var scale = orn ? ornamentScale(p) : p.scale === 'auto' || !p.scale ? pickScale(p) : +p.scale;
     var bl = toBlocks({ scale: scale, blocks: p.blocks });
     var W = 0, D = 0;
     bl.forEach(function (b) { W = Math.max(W, b.rx1); D = Math.max(D, b.ry1); });
-    var pegs = findPegs(bl), flags = [], parts = [];
+    var hole = orn ? holeAt(bl) : null;
+    function inHole(cx, cy) { return hole && cx > hole.x0 && cx < hole.x1 && cy > hole.y0 && cy < hole.y1; }
+    if (orn && res > 0.4 && res <= 1) res = Math.max(0.4, res / 2);   // finer roof detail for the small version; coarse estimates stay coarse
+    var pegs = orn ? [] : findPegs(bl), flags = [], parts = [];
     var levels = [];
     bl.forEach(function (b) { if (levels.indexOf(b.H) < 0) levels.push(b.H); });
     levels.sort(function (a, b) { return a - b; });
@@ -217,7 +241,9 @@
     var bx = [], by = [];
     bl.forEach(function (b) { bx.push(b.x0, b.x1); by.push(b.y0, b.y1); });
     pegs.forEach(function (g) { bx.push(g.cx - K.peg / 2, g.cx + K.peg / 2); by.push(g.cy - K.peg / 2, g.cy + K.peg / 2); });
+    if (hole) { bx.push(hole.x0, hole.x1); by.push(hole.y0, hole.y1); }
     var bodyT = meshField(axis(bx, 0, 0, W), axis(by, 0, 0, D), function (x, y, cx, cy) {
+      if (inHole(cx, cy)) return -1;
       var h = -1;
       for (var k = 0; k < bl.length; k++) { var b = bl[k]; if (inRect(cx, cy, b.x0, b.y0, b.x1, b.y1) && b.H > h) h = b.H; }
       if (h < 0) return -1;
@@ -249,8 +275,9 @@
       });
       var sock = pegs.filter(function (s) { return s.H === L; });
       sock.forEach(function (s) { rx.push(s.cx - K.socket / 2, s.cx + K.socket / 2); ry.push(s.cy - K.socket / 2, s.cy + K.socket / 2); });
+      if (hole) { rx.push(hole.x0, hole.x1); ry.push(hole.y0, hole.y1); }
       var t = meshField(axis(rx, res, lo[0], hi[0]), axis(ry, res, lo[1], hi[1]),
-        function (x, y, cx, cy) { return roofTop(bl, L, x, y, cx, cy); },
+        function (x, y, cx, cy) { return inHole(cx, cy) ? -1 : roofTop(bl, L, x, y, cx, cy); },
         function (cx, cy) {
           for (var k = 0; k < sock.length; k++) if (Math.abs(cx - sock[k].cx) < K.socket / 2 && Math.abs(cy - sock[k].cy) < K.socket / 2) return sock[k].depth;
           return 0;
@@ -270,13 +297,15 @@
     flags.push({ lvl: 'ok', text: 'No supports needed. Every part prints flat side down with no overhangs.' });
     if (parts.length > 2) flags.push({ lvl: 'warn', text: (parts.length - 1) + ' roof pieces, one per storey level. Each prints flat.' });
     if (trimmed) flags.push({ lvl: 'warn', text: 'The lower roof is trimmed where it meets the taller walls, with 0.2 mm clearance.' });
-    if (pegs.length < bl.length) flags.push({ lvl: 'warn', text: 'Locating pegs on ' + pegs.length + ' of ' + bl.length + ' blocks. The rest sit loose or need a dab of glue.' });
+    if (orn) flags.push({ lvl: 'ok', text: 'Christmas tree version at 1:' + scale + ', ' + Math.round(Math.max(W, D)) + ' mm across. A ' + K.hole + ' mm hole runs down through roof and walls: thread a ribbon through both and knot it under the walls.' });
+    else if (pegs.length < bl.length) flags.push({ lvl: 'warn', text: 'Locating pegs on ' + pegs.length + ' of ' + bl.length + ' blocks. The rest sit loose or need a dab of glue.' });
     else flags.push({ lvl: 'ok', text: 'Locating peg under every roof block, so the roof drops into place.' });
-    if (minEave < 0.8) flags.push({ lvl: 'warn', text: 'Eaves are ' + minEave.toFixed(1) + ' mm at this scale and will read as a fine edge.' });
+    if (orn && levels.length > 1) flags.push({ lvl: 'warn', text: 'More than one roof level. Only parts the hole passes through are held by the ribbon; glue the rest.' });
+    if (minEave < 0.8 && !orn) flags.push({ lvl: 'warn', text: 'Eaves are ' + minEave.toFixed(1) + ' mm at this scale and will read as a fine edge.' });
     if (minSide < 6) flags.push({ lvl: 'warn', text: 'One block is under 6 mm wide at this scale. Check it against the plans.' });
     if (H > BED.z) flags.push({ lvl: 'bad', text: 'Taller than the printer allows.' });
     return {
-      scale: scale, parts: parts, size: [W, D, H], grams: g, hours: g / 16 + 0.2 * parts.length,
+      scale: scale, ornament: orn, hole: hole, parts: parts, size: [W, D, H], grams: g, hours: g / 16 + 0.2 * parts.length,
       fits: fits, flags: flags, pegs: pegs.length, blocks: bl.length,
       tris: parts.reduce(function (a, pt) { return a + pt.tris.length / 9; }, 0)
     };

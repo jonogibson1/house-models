@@ -104,6 +104,9 @@ section.view{padding-top:34px}
 .cta-band p{color:var(--mat-ink);opacity:.86;max-width:44ch}
 .btn.light{background:var(--rule);color:#2a2205}
 .twocol{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px}
+.threecol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}
+.choice.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.seg .btn[aria-pressed="true"]{background:var(--btn);color:var(--btn-ink);border-color:var(--btn)}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:20px;min-width:0}
 .price{font-family:var(--display);font-size:1.7rem;font-weight:700}
 dl.spec{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;margin:0}
@@ -173,12 +176,13 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
 .totals .t{font-weight:700;border-top:1px solid var(--line);padding-top:6px}
 .totals span:nth-child(even){font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
 @media (max-width:820px){
-  .hero,.about,.split,.queue,.twocol,.why{grid-template-columns:minmax(0,1fr)}
+  .hero,.about,.split,.queue,.twocol,.threecol,.why{grid-template-columns:minmax(0,1fr)}
+  .choice.three{grid-template-columns:repeat(2,minmax(0,1fr))}
   .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
   .blkgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
   .about .pic{max-width:340px}
 }
-@media (max-width:480px){ .grid2,.choice,.steps{grid-template-columns:minmax(0,1fr)} .nav{margin-left:0} }
+@media (max-width:480px){ .grid2,.choice,.choice.three,.steps{grid-template-columns:minmax(0,1fr)} .nav{margin-left:0} }
 </style>
 </head>
 <body>
@@ -207,11 +211,12 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
           <button class="btn" data-go="start">See your house as a model</button>
           <span class="muted small">Free preview. No card needed.</span>
         </div>
-        <ul class="assure"><li>See it in 3D before you pay</li><li>Order only if you love it</li><li>From A$200</li></ul>
+        <ul class="assure"><li>See it in 3D before you pay</li><li>Order only if you love it</li><li>From A$200</li><li>Christmas tree version A$60</li></ul>
       </div>
       <div class="stagebox">
         <div class="stage" id="stage-hero" aria-label="3D sample model of a house. Drag to turn it."></div>
-        <span class="cap">A sample home at <span class="mono">1:150</span>. Yours is built from your plans. The yellow outline is an A5 page. Drag to turn it.</span>
+        <div class="row seg" role="group" aria-label="Which version to show"><button type="button" class="btn ghost sm" data-hero="full" aria-pressed="true">Shelf model</button><button type="button" class="btn ghost sm" data-hero="tree" aria-pressed="false">Christmas tree version</button></div>
+        <span class="cap" id="hero-cap"></span>
       </div>
     </div>
 
@@ -253,11 +258,16 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
 
     <div class="band">
       <h2>What it costs</h2>
-      <div class="twocol">
+      <div class="threecol">
         <div class="card stack tight">
           <span class="eyebrow">Printed model</span>
           <span class="price" id="price-print"></span>
           <p class="muted" id="price-print-note"></p>
+        </div>
+        <div class="card stack tight">
+          <span class="eyebrow">Christmas tree version</span>
+          <span class="price" id="price-tree"></span>
+          <p class="muted" id="price-tree-note"></p>
         </div>
         <div class="card stack tight">
           <span class="eyebrow">Print files only</span>
@@ -272,6 +282,7 @@ footer{margin-top:70px;border-top:1px solid var(--line);padding-top:18px;color:v
       <details><summary>What do I need to send?</summary><p>The PDF plans from your builder, architect or designer: the floor plan and the elevations. A roof plan helps. If you can't find them, your council can usually supply a copy for a fee.</p></details>
       <details><summary>How accurate is it?</summary><p>It captures the shape of your home: the walls, the roof form and the proportions, read from your plans. Windows, doors and gutters are left off in this first version. You see exactly what you will get on screen before you pay.</p></details>
       <details><summary>What if I don't like the preview?</summary><p>Then it costs you nothing. Ask for one change, or leave it there.</p></details>
+      <details><summary>What is the Christmas tree version?</summary><p>The same model of your house, printed small enough to hang on the tree, about 65 mm across for a typical home. A ribbon runs down through the roof and walls and is knotted underneath. It is A$60, and you see it in 3D before you order, the same as the shelf model.</p></details>
       <details><summary>How big is it?</summary><p>Around 1:150. A 20 metre wide home comes out about 133 mm wide, so most homes sit comfortably on an A5 page, a bookshelf or a desk.</p></details>
       <details><summary>When do I pay?</summary><p>After you have seen your preview and decided to order. Your card is held at that point and charged only when I confirm I can make it. If I can't, the hold is released.</p></details>
       <details><summary>Can I give one as a gift?</summary><p>Yes, as long as you can get the plans. It suits a housewarming, a handover day or the anniversary of moving in.</p></details>

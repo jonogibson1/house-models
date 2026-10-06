@@ -5,7 +5,8 @@ import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
 const G = globalThis.HouseGen;
-const DEFAULT_PRICING = { min: 200, fee: 120, perGram: 1.2, stl: 45 };
+const DEFAULT_PRICING = { min: 200, fee: 120, perGram: 1.2, stl: 45, tree: 60 };
+const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
 const POST = [[0.25, 10.2], [0.5, 11.7], [1, 16.0], [3, 20.25], [5, 24.45]];
 const enc = new TextEncoder(), dec = new TextDecoder();
@@ -91,11 +92,17 @@ function quoteFor(params, pricing) {
   const r = G.build(params, 4);
   return { scale: r.scale, size: r.size.map((v) => Math.round(v * 10) / 10), grams: Math.ceil(r.grams), hours: Math.round(r.hours * 10) / 10, fits: r.fits,
     parts: r.parts.map((p) => ({ name: p.name, label: p.label })), flags: r.flags,
-    print: Math.max(pricing.min, Math.round(pricing.fee + Math.ceil(r.grams) * pricing.perGram)), stl: pricing.stl, ship: shipFor(r) };
+    print: Math.max(pricing.min, Math.round(pricing.fee + Math.ceil(r.grams) * pricing.perGram)), stl: pricing.stl, ship: shipFor(r), tree: treeFor(params, pricing) };
+}
+/* The Christmas tree version: the same house, small, with a hanging hole. Flat price. */
+function treeFor(params, pricing) {
+  const t = G.build({ ...params, ornament: true }, 4);
+  return { price: pricing.tree, scale: t.scale, size: t.size.map((v) => Math.round(v * 10) / 10), grams: Math.ceil(t.grams), hours: Math.round(t.hours * 10) / 10, ship: shipFor(t) };
 }
 function totals(o) {
-  const price = o.choice === 'stl' ? o.quote.stl : o.quote.print;
-  const ship = o.choice !== 'stl' && o.delivery === 'post' ? o.quote.ship.cost : 0;
+  const tree = o.choice === 'tree' && o.quote.tree;
+  const price = o.choice === 'stl' ? o.quote.stl : tree ? o.quote.tree.price : o.quote.print;
+  const ship = o.choice === 'stl' || o.delivery !== 'post' ? 0 : tree ? o.quote.tree.ship.cost : o.quote.ship.cost;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
 const publicView = (o) => { const { key, ip, busy, reads, ...rest } = o; return rest; };
@@ -114,7 +121,7 @@ const SHAPE = 'Reply with only one JSON object, no other text, in exactly this s
   + '- problems: anything missing or unreadable, for example "No elevations in the set". Empty list if none.\n';
 function readPrompt(manifest, text) {
   let s = 'You are reading residential building plans to make a simple scale model of the OUTSIDE of one house.\n';
-  if (manifest.length) s += 'The attached images are pages of the owner\'s plan set, in this order:\n' + manifest.map((m, i) => (i + 1) + '. ' + m).join('\n') + '\nEnlarged parts of a page are there so small text is legible.\n';
+  if (manifest.length) s += 'The attached images are pages of the owner\'s plan set, in this order:\n' + manifest.map((m, i) => (i + 1) + '. ' + m).join('\n') + '\nEnlarged parts of a sheet are there so small text is legible. Sheets may have been picked from a longer set, so numbering can skip.\n';
   else s += 'No images could be attached, so work from the extracted text below only and lower your confidence to match.\n';
   if (text) s += 'Text extracted from the PDF follows at the end. Each line is: page, x and y position as fractions of the page (0,0 is top left), then the text. Use it for exact dimension figures. Dimensions on Australian plans are in millimetres unless marked otherwise.\n';
   s += '\nTask: describe the house as a small set of rectangular blocks, each with its own roof, so a generator can build it.\n'
@@ -221,7 +228,7 @@ async function handle(request, env) {
     if (path === '/api/admin/orders' && m === 'GET') return json({ orders: await db.scan('o:'), pricing });
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
-      for (const k of ['min', 'fee', 'perGram', 'stl']) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
+      for (const k of ['min', 'fee', 'perGram', 'stl', 'tree']) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
       await db.save('pricing', p); return json({ pricing: p });
     }
     const am = path.match(/^\/api\/admin\/orders\/([A-Z0-9-]{4,12})$/);
@@ -304,7 +311,7 @@ async function handle(request, env) {
       if (o.status !== 'preview' || !o.quote) return fail(409, 'bad_step', 'This order is not at the preview step.');
       if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(...WHY.busy);
       const b = await body();
-      o.choice = b.choice === 'stl' ? 'stl' : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
+      o.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
       Object.assign(o, totals(o)); o.holdAt = Date.now(); o.status = 'hold_placed';
       await db.save(k, o); return json({ order: publicView(o) });
     }
