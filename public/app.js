@@ -50,7 +50,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:250,fee:150,perGram:1.2,stl:59,tree:60}, ready:true };
+var cfg = { pricing:{min:250,fee:150,perGram:1.2,stl:30,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
@@ -217,7 +217,7 @@ function renderHome(){
   var heroTree = home.tree;
   $$('[data-hero]').forEach(function(b){ b.setAttribute('aria-pressed', String((b.getAttribute('data-hero')==='tree')===heroTree)); });
   $$('.from-price').forEach(function(el){ el.textContent=money(p.min); });
-  $('#about-pic').innerHTML=PIC_SVG;
+  // the about photo goes in #about-pic in index.html; nothing is drawn here so it is never overwritten
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
   $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
     : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. One white piece, like an architect\'s model: framed windows and doors, weatherboard lines, the alfresco on its posts, the driveway, garden beds and fences, and the address on the plinth. Drag to turn it.';
@@ -469,20 +469,22 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is your house and lot as the printed model will have them, built from your plans. If something is off, ask for one change before you order.</p>'+facts(o,ch)
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is your house and lot as the printed model will have them, built from your plans.</p>'+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>What was checked'+(o.ai.reviewed?' in the second review':'')+'</summary>'+ulist(o.ai.checks)+'</details>':'')
-     +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
+     +(ui.busy==='revise'?'<div class="row" style="flex-wrap:nowrap"><span class="spin" aria-hidden="true"></span><span>Working your changes into the model. This usually takes a minute or two.</span></div>'
+       :!o.revUsed&&ui.step!=='go'&&ui.step!=='change'?'<div class="note quiet stack tight" id="decide"><b>Would you like to go ahead with this model, or would you like any changes?</b><span class="small">One free set of changes is included. List everything you want changed in one go, and the model is updated before you decide.</span><div class="row"><button class="btn" id="go-ahead">Yes, go ahead</button><button class="btn ghost" id="want-change">I would like changes</button></div></div>'
+       :!o.revUsed&&ui.step==='change'?'<div class="stack tight" id="change-box"><h3>What would you like changed?</h3><label for="rev-note" class="small">List every change in one message. This is your one free set of changes.</label><textarea id="rev-note" placeholder="For example: the garage has a hip roof like the rest of the house. The front path is 1.2 m wide."></textarea><div class="row"><button class="btn" id="rev-send">Send my changes</button><button class="btn ghost" id="change-back">Back</button></div></div>'
+       :(o.revUsed?'<p class="muted small">Your free set of changes has been made. Would you like to go ahead with this model?</p>':'')
+        +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
      +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in white at 1:'+q.scale+' with everything on your plans. Yours to keep.</span></label>'
      +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
      +'<label><input type="radio" name="dv" id="dv-pickup" value="pickup"'+(dv==='pickup'?' checked':'')+'><span class="lab">Pickup, Ferny Hills</span><span class="price">Free</span><span class="muted small">Jono messages you a time.</span></label>'
      +'<label><input type="radio" name="dv" id="dv-post" value="post"'+(dv==='post'?' checked':'')+'><span class="lab">Australia Post</span><span class="price">'+money2(sh.cost)+'</span><span class="muted small">Parcel Post. Box about '+sh.box.join(' x ')+' mm, charged as '+(sh.kg<1?Math.ceil(sh.kg*1000)+' g':sh.kg.toFixed(2)+' kg')+'.</span></label></div>'
-     +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Nothing is charged until Jono confirms.</span></div>'
-     +(ui.busy==='revise'?'<div class="row" style="flex-wrap:nowrap"><span class="spin" aria-hidden="true"></span><span>Working your change into the model. This usually takes a minute or two.</span></div>'
-       :o.revUsed?'<p class="muted small">You have used your one change request.</p>'
-       :'<details><summary>Ask for one change</summary><div class="stack tight" style="margin-top:10px"><label for="rev-note" class="small">What should be different?</label><textarea id="rev-note" placeholder="For example: the garage has a hip roof like the rest of the house."></textarea><div class="row"><button class="btn ghost sm" id="rev-send">Send change request</button></div></div></details>');
+     +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Nothing is charged until Jono confirms.</span></div>')
+     +((!o.revUsed&&ui.step==='go')?'<p class="small"><button class="btn ghost sm" id="go-back">Back: I would like changes instead</button></p>':'');
   } else if(o.status==='hold_placed'){
     right='<h3>Hold placed. Waiting on Jono.</h3><p class="muted">A hold of '+money2(o.total)+' is on your card. Jono confirms by <b>'+when(o.holdAt+72*3600e3)+'</b>. If he doesn\'t, the hold drops off by itself.</p>'+timeline(o)
      +'<p class="muted small">This page updates by itself when he confirms.</p>';
@@ -499,10 +501,14 @@ function renderOrder(){
   $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ var dv=$('#dv-post'); o.choice=this.value; if(dv) o.delivery=dv.checked?'post':'pickup'; renderOrder(); var f=$('#ch-'+o.choice); if(f) f.focus({preventScroll:true}); }); });
   $$('input[name=dv]',root).forEach(function(i){ i.addEventListener('change',function(){ o.delivery=this.value; }); });
   var tp=$('#to-pay'); if(tp) tp.addEventListener('click',function(){ o.choice=($('#ch-stl').checked?'stl':$('#ch-tree')&&$('#ch-tree').checked?'tree':'print'); o.delivery=($('#dv-post').checked?'post':'pickup'); ui.pay=true; renderOrder(); window.scrollTo(0,0); });
+  var ga=$('#go-ahead'); if(ga) ga.addEventListener('click',function(){ ui.step='go'; renderOrder(); var f=$('#ch-print')||$('#ch-stl'); if(f) f.focus({preventScroll:false}); });
+  var wc=$('#want-change'); if(wc) wc.addEventListener('click',function(){ ui.step='change'; renderOrder(); var t=$('#rev-note'); if(t) t.focus(); });
+  var gb=$('#go-back'); if(gb) gb.addEventListener('click',function(){ ui.step='change'; renderOrder(); var t=$('#rev-note'); if(t) t.focus(); });
+  var cb=$('#change-back'); if(cb) cb.addEventListener('click',function(){ ui.step=''; renderOrder(); });
   var rs=$('#rev-send'); if(rs) rs.addEventListener('click',function(){
     var n=$('#rev-note').value.trim(); if(!n){ toast('Say what should change first.'); return; }
     ui.busy='revise'; renderOrder();
-    api('POST', opath(o.id,'/revise'), {note:n}).then(function(res){ ui.busy=''; cur=res.order; renderOrder(); toast('Your model has been updated.'); }, function(e){ ui.busy=''; renderOrder(); toast(e.message); });
+    api('POST', opath(o.id,'/revise'), {note:n}).then(function(res){ ui.busy=''; ui.step=''; cur=res.order; renderOrder(); toast('Your model has been updated with your changes.'); }, function(e){ ui.busy=''; renderOrder(); toast(e.message); });
   });
   var cd=$('#cust-dl'); if(cd) cd.addEventListener('click',function(){ saveZip(o); });
 }

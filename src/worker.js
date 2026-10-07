@@ -5,7 +5,7 @@ import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
 const G = globalThis.HouseGen;
-const DEFAULT_PRICING = { min: 250, fee: 150, perGram: 1.2, stl: 59, tree: 60 };
+const DEFAULT_PRICING = { min: 250, fee: 150, perGram: 1.2, stl: 30, tree: 60 };
 const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
 const POST = [[0.25, 10.2], [0.5, 11.7], [1, 16.0], [3, 20.25], [5, 24.45]];
