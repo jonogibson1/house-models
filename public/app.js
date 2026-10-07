@@ -18,16 +18,26 @@ document.addEventListener('click',function(e){
   try{ navigator.clipboard.writeText(inp.value).then(function(){ toast('Link copied.'); }, fallback); }catch(_){ fallback(); }
 });
 
-/* Sample on the home page: a typical single-storey brick home, about 19 x 9 m, hip roof at 22.5 degrees, garage at the front. */
-var SAMPLE = { scale:'auto', blocks:[
-  {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n',openings:[
-    {side:'s',at:1.2,w:2.4,sill:0,head:2.1,kind:'door'},{side:'s',at:6.2,w:1.45,sill:0.9,head:2.1,kind:'window'},{side:'s',at:9.9,w:1.45,sill:0.9,head:2.1,kind:'window'},
+/* Sample on the home page: a typical single-storey brick home on a 32 x 10.5 m lot, with its finishes, openings, alfresco and landscaping. */
+var SAMPLE = { scale:'auto', title:'Sample home, Ferny Hills', north:-24, blocks:[
+  {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,wall:'brick',roofMat:'tile',
+   cladding:[{side:'e',at:0,w:3.83,z0:0.9,z1:2.74,kind:'weatherboard'},{side:'s',at:16,w:2.95,z0:0,z1:2.74,kind:'render'}],
+   openings:[{side:'s',at:1.2,w:2.4,sill:0,head:2.1,kind:'door'},{side:'s',at:6.2,w:1.45,sill:0.9,head:2.1,kind:'window'},{side:'s',at:9.9,w:1.45,sill:0.9,head:2.1,kind:'window'},
     {side:'s',at:13.3,w:0.85,sill:1.2,head:2.1,kind:'window'},{side:'s',at:16.3,w:1.45,sill:0.9,head:2.1,kind:'window'},
     {side:'w',at:2.0,w:2.4,sill:0,head:2.1,kind:'door'},{side:'w',at:5.2,w:1.2,sill:0.9,head:2.1,kind:'window'},
     {side:'n',at:3.5,w:1.8,sill:1.0,head:2.1,kind:'window'},{side:'n',at:7.4,w:1.2,sill:1.2,head:2.1,kind:'window'},{side:'n',at:9.8,w:0.6,sill:1.5,head:2.1,kind:'window'},
     {side:'e',at:1.0,w:1.8,sill:0.9,head:2.1,kind:'window'}]},
-  {name:'Garage and porch',x:11.51,y:3.83,w:7.44,d:4.92,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,ridge:'auto',high:'n',openings:[
-    {side:'e',at:2.05,w:2.4,sill:0,head:2.2,kind:'garage'},{side:'e',at:0.5,w:0.9,sill:0,head:2.1,kind:'door'}]} ]};
+  {name:'Garage and porch',x:11.51,y:3.83,w:7.44,d:4.92,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,wall:'brick',roofMat:'tile',
+   cladding:[{side:'e',at:0,w:1.9,z0:0,z1:2.74,kind:'render'}],
+   openings:[{side:'e',at:2.05,w:2.4,sill:0,head:2.2,kind:'garage'},{side:'e',at:0.5,w:0.9,sill:0,head:2.1,kind:'door'}]},
+  {name:'Alfresco',x:-2.85,y:3.2,w:2.95,d:2.7,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.6,open:true,roofMat:'tile'} ],
+  site:{w:32,d:10.5,houseX:9.01,houseY:1.6,north:-24,cover:'turf',items:[
+   {kind:'driveway',x:27.96,y:5.4,w:4.04,d:5.1},{kind:'concrete',x:6.16,y:4.8,w:2.85,d:2.7},{kind:'path',x:27.96,y:4.0,w:4.04,d:1.4},
+   {kind:'garden',x:29.5,y:0,w:2.5,d:5.4},{kind:'pebbles',x:0,y:0,w:9.0,d:0.6},
+   {kind:'tree',x:30.7,y:1.4,r:0.8,h:2.4},{kind:'tree',x:30.7,y:4.0,r:0.8,h:2.4},{kind:'shrub',x:29.9,y:2.7,r:0.35,h:0.5},
+   {kind:'fence',x1:0,y1:0,x2:0,y2:10.5,h:1.8},{kind:'fence',x1:0,y1:0,x2:26.0,y2:0,h:1.8},{kind:'fence',x1:0,y1:10.5,x2:20,y2:10.5,h:1.8},{kind:'fence',x1:26,y1:0,x2:26,y2:1.6,h:1.8},
+   {kind:'box',name:'air conditioner',x:13,y:9.6,w:0.9,d:0.35,h:0.7},{kind:'box',name:'air conditioner',x:16.5,y:0.9,w:0.9,d:0.35,h:0.7},
+   {kind:'box',name:'letterbox',x:31.4,y:4.0,w:0.4,d:0.4,h:1.1},{kind:'box',name:'hot water system',x:8.5,y:2.0,w:0.5,d:0.5,h:1.6}]} };
 function treeOf(params){ var t=clone(params); t.ornament=true; return t; }
 function itemName(c){ return c==='stl'?'STL files':c==='tree'?'Christmas tree version':'Printed model'; }
 
@@ -40,7 +50,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:200,fee:120,perGram:1.2,stl:45,tree:60}, ready:true };
+var cfg = { pricing:{min:250,fee:150,perGram:1.2,stl:59,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
@@ -102,6 +112,7 @@ function Viewer(spin){
   c.addEventListener('pointerdown',function(e){ drag={x:e.clientX,y:e.clientY}; self.spin=false; try{c.setPointerCapture(e.pointerId);}catch(_){} });
   c.addEventListener('pointermove',function(e){ if(!drag) return; self.az-=(e.clientX-drag.x)*0.01; self.el=Math.max(0.08,Math.min(1.45,self.el+(e.clientY-drag.y)*0.006)); drag={x:e.clientX,y:e.clientY}; self.draw(); });
   ['pointerup','pointercancel','pointerleave'].forEach(function(n){ c.addEventListener(n,function(){ drag=null; }); });
+  c.addEventListener('wheel',function(e){ e.preventDefault(); self.spin=false; self.dist=Math.max(self.base*0.25,Math.min(self.base*1.6,self.dist*Math.exp(e.deltaY*0.0012))); self.draw(); },{passive:false});
   this.ro = window.ResizeObserver ? new ResizeObserver(function(){ self.size(); }) : null;
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   if(spin && !reduce){ (function loop(){ if(self.spin && self.holder && self.holder.offsetParent!==null){ self.az+=0.0022; self.draw(); } if(self.spin) requestAnimationFrame(loop); })(); }
@@ -126,20 +137,12 @@ Viewer.prototype.set=function(result){
   var cx=result.size[0]/2, cy=result.size[1]/2;
   result.parts.forEach(function(p){
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p.tris,3)); g.computeVertexNormals();
-    var m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(cssVar(p.kind==='roof'?'--roof':'--wall')),roughness:0.85,metalness:0,flatShading:true}));
+    var m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(partColour(p)),roughness:p.mat==='glass'?0.35:0.85,metalness:0,flatShading:true}));
     m.userData.part=p; m.position.set(-cx,-cy,p.z0); self.model.add(m);
-    if(p.detail && p.detail.length){
-      var gd=new THREE.BufferGeometry(); gd.setAttribute('position',new THREE.BufferAttribute(p.detail,3)); gd.computeVertexNormals();
-      var md=new THREE.Mesh(gd,new THREE.MeshStandardMaterial({color:new THREE.Color(cssVar('--glass')),roughness:0.4,metalness:0.1,flatShading:true,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
-      md.userData.part=p; md.position.set(-cx,-cy,p.z0); self.model.add(md);
-    }
   });
   var span=Math.max(260,Math.max(result.size[0],result.size[1])*1.6);
   var grid=new THREE.GridHelper(Math.ceil(span/10)*10*2, Math.ceil(span/10)*2, new THREE.Color(cssVar('--mat-line')), new THREE.Color(cssVar('--mat-line')));
   grid.rotation.x=Math.PI/2; grid.position.z=-0.05; grid.material.transparent=true; grid.material.opacity=0.55; this.deco.add(grid);
-  var land = result.size[0] >= result.size[1], aw=land?297:210, ah=land?210:297;
-  var pts=[[-aw/2,-ah/2],[aw/2,-ah/2],[aw/2,ah/2],[-aw/2,ah/2],[-aw/2,-ah/2]].map(function(p){ return new THREE.Vector3(p[0],p[1],0.05); });
-  this.deco.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--rule'))})));
   /* A standard 375 ml drink can beside the model, for size: 66 mm across, 122 mm tall. */
   var can=new THREE.Group(), R=33, CH=122;
   function cyl(r1,r2,h,z,col,metal){ var c=new THREE.Mesh(new THREE.CylinderGeometry(r1,r2,h,48), new THREE.MeshStandardMaterial({color:col,roughness:metal?0.35:0.5,metalness:metal?0.7:0.1})); c.rotation.x=Math.PI/2; c.position.z=z+h/2; can.add(c); }
@@ -147,7 +150,7 @@ Viewer.prototype.set=function(result){
   cyl(R-4,R,4,CH-9,0xc9ccd1,true); cyl(R-5,R-4,5,CH-5,0xc9ccd1,true);
   can.position.set(cx+R+22, -cy+R, 0); this.deco.add(can);
   var wide=result.size[0]+2*R+22;
-  this.dist=Math.max(250,Math.max(wide*1.15,result.size[1],CH*1.55)*1.85);
+  this.dist=Math.max(200,Math.max(wide,result.size[1]*1.4,CH*1.5)*1.3); this.base=this.dist;
   this.target=CH*0.3;
   this.model.position.x=-(2*R+22)/2; can.position.x+=-(2*R+22)/2;
   this.place(); this.draw();
@@ -160,6 +163,10 @@ Viewer.prototype.draw=function(){
   this.cam.lookAt(0,t,0); this.r.render(this.scene,this.cam);
 };
 var V = { hero:null, order:null, queue:null };
+var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherboard:'#dcdfd8', vertical:'#cfc6b4', stone:'#b4a58c', glass:'#2c3a44', door:'#6d5a48', post:'#efe9de',
+  base:'#34383b', turf:'#5f7f45', garden:'#6b4f36', mulch:'#7a5a3a', pebbles:'#c3bdb2', concrete:'#bdbbb5', driveway:'#a8a6a0', path:'#d3cdc1', paving:'#c9bfae',
+  deck:'#8b6a4a', pool:'#5aa8cf', gravel:'#bdb6a6', sand:'#e3d3a8', fence:'#9a7b5a', tree:'#3f6b3a', fixture:'#e6e2da' };
+function partColour(p){ return p.kind==='roof' ? cssVar('--roof') : (MATCOL[p.mat] || cssVar('--wall')); }
 function viewer(name, spin){ if(!V[name]) V[name]=new Viewer(spin); return V[name]; }
 
 /* ---------- routing ---------- */
@@ -192,7 +199,7 @@ document.addEventListener('click',function(e){ var b=e.target.closest('[data-her
 function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   $('#price-print').textContent='From '+money(p.min);
-  $('#price-print-note').textContent='Priced on the filament your model uses. The sample above, a 19 metre single-storey home at 1:100, is '+money(printPrice(r))+'. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
+  $('#price-print-note').textContent='Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
   var tr=built(treeOf(SAMPLE),0.8);
@@ -203,7 +210,7 @@ function renderHome(){
   $('#about-pic').innerHTML=PIC_SVG;
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
   $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
-    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can and the yellow outline an A4 page. Windows and doors are cut into the walls. Drag to turn it.';
+    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. Everything on the plans is in it: brick, render and weatherboard, windows and doors, the tiled roof, the alfresco, driveway, garden, trees and fences. Drag to turn it.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -333,7 +340,7 @@ async function startOrder(f, plans){
 async function readNow(id){
   if(!ui.pending) ui.pending={ addr:cur?cur.addr:'', msg:'' };
   ui.err=''; renderOrder();
-  setPending('Reading your plans and working out the house. This usually takes one to three minutes.');
+  setPending('Reading your plans and working out the house. Your plans are read, then checked a second time against the drawings. This usually takes three to five minutes.');
   try{
     var res=await api('POST', opath(id,'/read'), memFrag[id]||'', true);
     cur=res.order; ui.pending=null; renderOrder();
@@ -349,18 +356,46 @@ function timeline(o){
   var fin = o.status==='collected'||o.status==='delivered'||o.status==='ready';
   return '<ol class="tl">'+steps.map(function(s,i){ return '<li class="'+(i<at||(fin&&i===at)?'done':i===at?'now':'')+'">'+s+'</li>'; }).join('')+'</ol>';
 }
+function describe(params){
+  var d={ win:0, door:0, garage:0, fin:{}, open:0, site:null };
+  (params&&params.blocks||[]).forEach(function(b){
+    if(b.open){ d.open++; return; }
+    (b.openings||[]).forEach(function(x){ if(x.kind==='garage') d.garage++; else if(x.kind==='door') d.door++; else d.win++; });
+    d.fin[b.wall||'render']=1; (b.cladding||[]).forEach(function(z){ d.fin[z.kind]=1; });
+  });
+  if(params&&params.site){ var it=params.site.items||[], c=function(k){ return it.filter(function(x){ return x.kind===k; }).length; };
+    var surf={}; it.forEach(function(x){ if(['fence','retaining','wall','tree','shrub','box'].indexOf(x.kind)<0) surf[x.kind]=1; });
+    d.site={ w:params.site.w, d:params.site.d, cover:params.site.cover, fences:c('fence'), walls:c('retaining')+c('wall'), trees:c('tree')+c('shrub'), boxes:it.filter(function(x){ return x.kind==='box'; }).map(function(x){ return x.name||'fixture'; }), surf:Object.keys(surf) }; }
+  return d;
+}
+var FIN={ brick:'face brick', render:'render', weatherboard:'weatherboards', vertical:'vertical cladding', stone:'stone' };
+function plural(n,w){ return n+' '+w+(n===1?'':'s'); }
+function detailRows(o){
+  var d=describe(o.params), h='';
+  var ops=[d.win?plural(d.win,'window'):'', d.door?plural(d.door,'door'):'', d.garage?plural(d.garage,'garage door'):''].filter(Boolean).join(', ');
+  if(ops) h+='<dt>Openings</dt><dd>'+ops+'</dd>';
+  var f=Object.keys(d.fin).map(function(k){ return FIN[k]||k; }); if(f.length) h+='<dt>Walls</dt><dd>'+esc(f.join(', '))+'</dd>';
+  if(d.open) h+='<dt>Open areas</dt><dd>'+plural(d.open,'alfresco or porch')+' on posts</dd>';
+  if(d.site){
+    h+='<dt>Lot</dt><dd>'+(+d.site.w).toFixed(1)+' x '+(+d.site.d).toFixed(1)+' m</dd>';
+    var land=[d.site.cover].concat(d.site.surf).filter(function(v,i,a){ return v && a.indexOf(v)===i; }).join(', ');
+    var more=[d.site.fences?plural(d.site.fences,'fence'):'', d.site.walls?plural(d.site.walls,'retaining wall'):'', d.site.trees?plural(d.site.trees,'tree')+' and shrubs':'', d.site.boxes.length?d.site.boxes.join(', '):''].filter(Boolean).join(', ');
+    h+='<dt>Landscaping</dt><dd>'+esc(land+(more?'; '+more:''))+'</dd>';
+  }
+  return h;
+}
 function facts(o, choice){
   var q=o.quote;
   if(choice==='tree' && q.tree) return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.tree.scale+'</dd><dt>Size</dt><dd>'+q.tree.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
    +'<dt>Hanging</dt><dd>ribbon through a hole in the roof</dd><dt>Filament</dt><dd>about '+q.tree.grams+' g</dd></dl>';
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Model size</dt><dd>'+q.size.map(function(v){return Math.round(v);}).join(' x ')+' mm</dd>'
-   +'<dt>Parts</dt><dd>'+q.parts.map(function(p){return esc(String(p.label).toLowerCase());}).join(', ')+'</dd>'+(r0openings(o)?'<dt>Openings</dt><dd>'+r0openings(o)+' windows and doors</dd>':'')+'<dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
+   +detailRows(o)+'<dt>Filament</dt><dd>about '+q.grams+' g</dd></dl>';
 }
-function r0openings(o){ var n=0; (o.params&&o.params.blocks||[]).forEach(function(b){ n+=(b.openings||[]).length; }); return n; }
 function ulist(a){ return '<ul class="plain">'+a.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>'; }
 function shipOf(o, choice){ return choice==='tree' && o.quote.tree ? o.quote.tree.ship : o.quote.ship; }
 function totalsOf(o, choice, delivery){ var tr=choice==='tree' && o.quote.tree, price=choice==='stl'?o.quote.stl:tr?o.quote.tree.price:o.quote.print, ship=(choice!=='stl' && delivery==='post')?shipOf(o,choice).cost:0; return { price:price, ship:ship, total:price+ship }; }
-function modelFor(o){ return o.choice==='tree' && o.quote && o.quote.tree ? treeOf(o.params) : o.params; }
+function titled(params, o){ var t=clone(params); t.title=[o.addr,o.suburb].filter(Boolean).join(', '); return t; }
+function modelFor(o){ return o.choice==='tree' && o.quote && o.quote.tree ? treeOf(o.params) : titled(o.params, o); }
 var pollT=null;
 function showOrder(){
   clearInterval(pollT);
@@ -426,8 +461,9 @@ function renderOrder(){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
     right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape, roof, windows and doors your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
+     +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>What was checked'+(o.ai.reviewed?' in the second review':'')+'</summary>'+ulist(o.ai.checks)+'</details>':'')
      +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
-     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in two colours at 1:'+q.scale+', windows and doors included. Yours to keep.</span></label>'
+     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in colour at 1:'+q.scale+' with everything on your plans. Yours to keep.</span></label>'
      +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
@@ -447,7 +483,7 @@ function renderOrder(){
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
-  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it. The can beside it is a standard 375 ml drink can, for size. The yellow outline is an A4 page.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
+  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it, scroll to zoom. The can beside it is a standard 375 ml drink can, for size.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
   var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
   $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ var dv=$('#dv-post'); o.choice=this.value; if(dv) o.delivery=dv.checked?'post':'pickup'; renderOrder(); var f=$('#ch-'+o.choice); if(f) f.focus({preventScroll:true}); }); });
@@ -462,16 +498,34 @@ function renderOrder(){
 }
 
 /* ---------- print files ---------- */
+/* Suggested filament for each part when the AMS holds four colours. Bambu Studio lets any part take any filament. */
+var SLOT = { lettering:'A, white', render:'A, white', weatherboard:'A, white', vertical:'A, white', post:'A, white', fixture:'A, white', path:'A, white', concrete:'A, white', paving:'A, white', sand:'A, white',
+  brick:'B, brick red', stone:'B, brick red', deck:'B, brick red', door:'B, brick red',
+  turf:'C, green', tree:'C, green', garden:'C, green', mulch:'C, green',
+  glass:'D, charcoal', driveway:'D, charcoal', fence:'D, charcoal', pebbles:'D, charcoal', gravel:'D, charcoal', pool:'D, charcoal', base:'D, charcoal' };
 function saveZip(o){
   toast('Building print files at full detail...');
   setTimeout(function(){
-    var tree=o.choice==='tree', r=G.build(tree?treeOf(o.params):o.params,0.5), enc=new TextEncoder();
-    var files=r.parts.map(function(p){ return {name:p.name+'.stl',data:G.stl(p.tris)}; });
-    var notes=(tree?'Christmas tree version ':'House model ')+o.id+'\r\n'+o.addr+'\r\nScale 1:'+r.scale+'\r\nSize '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled\r\n\r\n'
-      +'Print each STL as loaded, flat side down. No supports. 0.2 mm layers, 2 walls, 10 to 15 percent infill.\r\n'
-      +(tree?'Walls in a light colour, roof in a dark one. Thread a ribbon down through the hole in the roof and the walls, knot it under the walls, and add a dab of glue between roof and walls.\r\n'
-        :'Walls in a light colour, roof in a dark one. The roof drops onto the pegs on top of the walls.\r\n')
-      +'Estimated filament: '+Math.ceil(r.grams)+' g. Estimated print time: '+r.hours.toFixed(1)+' h. Both are rough figures; the slicer has the real ones.\r\n';
+    var tree=o.choice==='tree', r=G.build(tree?treeOf(o.params):titled(o.params,o),0.5), enc=new TextEncoder(), files=[], k;
+    var p1=r.parts.filter(function(p){ return p.kind!=='roof'; }), roofs=r.parts.filter(function(p){ return p.kind==='roof'; });
+    var org=[Infinity,Infinity,Infinity];
+    p1.forEach(function(p){ for(k=0;k<3;k++) org[k]=Math.min(org[k], p.st.min[k]+(k===2?p.z0:0)); });
+    p1.forEach(function(p){
+      var t=p.tris; if(p.z0){ t=new Float32Array(p.tris); for(k=2;k<t.length;k+=3) t[k]+=p.z0; }
+      files.push({name:'plate-1-'+p.name+'.stl',data:G.stl(t,org)});
+    });
+    roofs.forEach(function(p,i){ files.push({name:'plate-'+(2+i)+'-'+p.name+'.stl',data:G.stl(p.tris)}); });
+    var L='\r\n', notes=(tree?'Christmas tree version ':'House model ')+o.id+L+o.addr+L+'Scale 1:'+r.scale+L+'Size '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled'+L+L
+      +'All parts print flat side down with supports OFF. 0.2 mm layers, 2 walls, 10 to 15 percent infill.'+L+L
+      +'PLATE 1, one multi-colour print'+L
+      +'Select every plate-1 file and drag them into Bambu Studio together. When it asks whether to load them as a single object with multiple parts, say Yes.'+L
+      +'The parts share one origin, so they land assembled. Then give each part its filament:'+L
+      +p1.map(function(p){ return '  '+p.name+'.stl  '+(SLOT[p.mat]||'A, white')+'  ('+Math.ceil(p.grams)+' g)'; }).join(L)+L
+      +'With four AMS slots: A white, B brick red, C green, D charcoal. Swap any part to a different slot if you prefer.'+L+L
+      +'PLATE '+(roofs.length>1?'2 onwards':'2')+', the roof'+(roofs.length>1?'s, one per storey level':'')+L
+      +'Print in one colour, flat underside down. It drops onto the tapered pegs on top of the walls.'+L
+      +(tree?'Thread a ribbon down through the hole in the roof and the walls, knot it under the walls, and add a dab of glue between roof and walls.'+L:'')+L
+      +'Estimated filament: '+Math.ceil(r.grams)+' g. Estimated print time: '+r.hours.toFixed(1)+' h. Both are rough figures; the slicer has the real ones.'+L;
     files.push({name:'README.txt',data:enc.encode(notes)});
     var url=URL.createObjectURL(new Blob([G.zip(files)],{type:'application/zip'})), a=document.createElement('a');
     a.href=url; a.download=(tree?'tree-model-':'house-model-')+o.id+'.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },4000);
@@ -505,6 +559,7 @@ function aiBlock(o){
   var c=o.ai.confidence, lvl=c>=0.75?['ok','High']:c>=0.5?['att','Medium']:['bad','Low'];
   return '<div class="stack tight"><div class="row"><h3>Read from the plans</h3><span class="pill '+lvl[0]+'">'+lvl[1]+' confidence, '+Math.round(c*100)+'%</span></div>'
     +'<p class="muted small">'+(o.ai.pages?o.ai.pages+' pages, '+o.ai.images+' images sent.':'')+(o.ai.revised?' Includes the customer\'s change.':'')+'</p>'
+    +(o.ai.checks&&o.ai.checks.length?'<span class="lab">'+(o.ai.reviewed?'Checked in the second review':'Checked')+'</span>'+ulist(o.ai.checks):'')
     +(o.ai.assumptions.length?'<span class="lab">Assumed</span>'+ulist(o.ai.assumptions):'')+(o.ai.problems.length?'<span class="lab">Problems</span>'+ulist(o.ai.problems):'')+'</div>';
 }
 function aorder(id){ for(var i=0;i<admin.orders.length;i++) if(admin.orders[i].id===id) return admin.orders[i]; return null; }
@@ -583,7 +638,7 @@ function renderQueue(){
          :'<div class="note quiet">The plans are being read. This starts by itself when the customer uploads.</div>')
        +aiBlock(o)+stepIn+ed+'</div>';
     } else if(o.params){
-      d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':flagList(o.quote.flags)+estTable(o.quote));
+      d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8).flags)+estTable(o.quote));
       if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn;
       if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+72*3600e3)+' or the hold lapses.</div>'
         +'<div class="row"><button type="button" class="btn" id="q-accept">Accept and charge '+money2(o.total)+'</button></div>'
