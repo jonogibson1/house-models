@@ -55,6 +55,8 @@ function lineWall(T, x1, y1, x2, y2, t, z0, z1) {
   return prism2d(T, [[[x1 + nx, y1 + ny], [x1 - nx, y1 - ny], [x2 - nx, y2 - ny], [x2 + nx, y2 + ny]]], z0, z1);
 }
 
+/* Cuts start this far in front of the wall face so they also pass through proud render panels. */
+const FRONT = 0.07;
 /* Facade frame: a face is (side, c) with c the face coordinate (y for n/s, x for e/w). Along-face u is x for n/s, y for e/w. */
 function frame(side, c) {
   const ns = side === 'n' || side === 's';
@@ -66,7 +68,7 @@ function recess(T, side, c, a, b, z0, z1, depth) {
   const f = frame(side, c); depth = Math.min(depth, z1 - z0 - 0.05);
   const p = [];
   for (const s of [a, b]) {
-    const fr = f.pt(s, EPS), bk = f.pt(s, -depth);
+    const fr = f.pt(s, FRONT), bk = f.pt(s, -depth);
     p.push([fr[0], fr[1], z0], [fr[0], fr[1], z1 + EPS], [bk[0], bk[1], z0], [bk[0], bk[1], z1 - depth]);
   }
   return hull(T, p);
@@ -80,7 +82,7 @@ function faceBox(T, side, c, a, b, z0, z1, t0, t1) {
 function hGroove(T, side, c, a, b, z, h, depth) {
   const f = frame(side, c), p = [];
   for (const s of [a, b]) {
-    const fr = f.pt(s, EPS), bk = f.pt(s, -depth);
+    const fr = f.pt(s, FRONT), bk = f.pt(s, -depth);
     p.push([fr[0], fr[1], z], [fr[0], fr[1], z + h], [bk[0], bk[1], z], [bk[0], bk[1], z + h - depth]);
   }
   return hull(T, p);
@@ -165,17 +167,20 @@ export function build(params, opts) {
     b._roof = { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.d, own: true };
     delete b._under;
   }
+  const touches = (a, o) => a.x <= o.x + o.w + 0.05 && o.x <= a.x + a.w + 0.05 && a.y <= o.y + o.d + 0.05 && o.y <= a.y + a.d + 0.05;
   for (const o of blocks) {
-    const h = o.open && o.roofWith ? byName(o.roofWith) : null;
-    if (!h) continue;
-    const r = h._roof, R = { x0: Math.min(r.x0, o.x), y0: Math.min(r.y0, o.y), x1: Math.max(r.x1, o.x + o.w), y1: Math.max(r.y1, o.y + o.d), own: true };
-    // only when the widened roof still sits over house or porch everywhere, so it never roofs open ground
-    let ok = true;
-    for (let i = 0; i <= 12 && ok; i++) for (let j = 0; j <= 12 && ok; j++) {
-      const x = R.x0 + 0.02 + (R.x1 - R.x0 - 0.04) * i / 12, y = R.y0 + 0.02 + (R.y1 - R.y0 - 0.04) * j / 12;
-      if (!covered(x, y)) ok = false;
+    if (!o.open || !o.roofWith) continue;
+    // the named block first, then any block it adjoins: the first whose roof can widen over the porch without roofing open ground
+    const named = byName(o.roofWith), cands = [named, ...closed.filter((c) => c !== named && touches(c, o)).sort((p, q) => p.w * p.d - q.w * q.d)].filter(Boolean);
+    for (const h of cands) {
+      const r = h._roof, R = { x0: Math.min(r.x0, o.x), y0: Math.min(r.y0, o.y), x1: Math.max(r.x1, o.x + o.w), y1: Math.max(r.y1, o.y + o.d), own: true };
+      let ok = true;
+      for (let i = 0; i <= 16 && ok; i++) for (let j = 0; j <= 16 && ok; j++) {
+        const x = R.x0 + 0.02 + (R.x1 - R.x0 - 0.04) * i / 16, y = R.y0 + 0.02 + (R.y1 - R.y0 - 0.04) * j / 16;
+        if (!covered(x, y)) ok = false;
+      }
+      if (ok) { h._roof = R; o._under = true; break; }
     }
-    if (ok) { h._roof = R; o._under = true; }
   }
 
   // ---------- massing: walls and roofs
@@ -219,6 +224,7 @@ export function build(params, opts) {
 
   // ---------- facades: openings, frames and cladding
   let nOpen = 0, nGroove = 0;
+  const panels = [];
   const faceOut = (b, side, a, bb) => {
     // a and bb run along the wall from the block's corner; test in house coordinates
     const o = EPS + 0.1, u0 = side === 's' || side === 'n' ? b.x : b.y, test = [u0 + a + 0.05, u0 + (a + bb) / 2, u0 + bb - 0.05];
@@ -251,6 +257,14 @@ export function build(params, opts) {
       }
       nOpen++;
     }
+    // board areas on each face, so a render panel listed over a whole wall leaves them showing
+    const boards = {};
+    for (const z of b.cladding || []) {
+      if (!['weatherboard', 'vertical'].includes(z.kind) || !['n', 's', 'e', 'w'].includes(z.side)) continue;
+      const len = sideLen(b, z.side), a = Math.max(0, +z.at || 0), bb = Math.min(len, (+z.at || 0) + (z.w == null ? 99 : +z.w));
+      if (bb - a < 0.3) continue;
+      (boards[z.side] = boards[z.side] || []).push(faceBox(T, z.side, faceC(b, z.side), along0(b, z.side) + a, along0(b, z.side) + bb, Math.max(0, +z.z0 || 0), Math.min(b._H, z.z1 == null ? 99 : +z.z1), -0.01, 0.2));
+    }
     for (const z of b.cladding || []) {
       if (!['n', 's', 'e', 'w'].includes(z.side)) continue;
       const len = sideLen(b, z.side), a = Math.max(0, +z.at || 0), bb = Math.min(len, (+z.at || 0) + (z.w == null ? 99 : +z.w));
@@ -266,13 +280,16 @@ export function build(params, opts) {
         for (let u = u0 + pitch / 2; u + gw < u1; u += pitch) { voids.push(faceBox(T, z.side, c, u, u + gw, z0, z1, -gd, EPS)); nGroove++; }
       } else if (z.kind === 'render' || z.kind === 'stone') {
         // a render or stone panel stands slightly proud of the brickwork so it reads in white
-        extras.push(faceBox(T, z.side, c, u0, u1, z0, z1, -0.02, Math.max(k(0.4), 0.04)));
+        let panel = faceBox(T, z.side, c, u0, u1, z0, z1, -0.02, Math.max(k(0.4), 0.04));
+        const cut = boards[z.side] ? unionAll(T, boards[z.side]) : null;
+        if (cut) panel = track(T, panel.subtract(cut));
+        panels.push(panel);
       }
     }
   }
 
   // ---------- the building
-  let building = unionAll(T, solids);
+  let building = unionAll(T, solids.concat(panels));
   const vu = unionAll(T, voids);
   if (vu) building = track(T, building.subtract(vu));
   const xu = unionAll(T, extras);
