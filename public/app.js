@@ -50,7 +50,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:250,fee:150,perGram:1.2,stl:30,tree:60}, ready:true };
+var cfg = { pricing:{min:300,fee:300,perGram:0,stl:30,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
@@ -98,7 +98,7 @@ function shipFor(r){
 }
 
 var STATUS = { received:['Plans received','att'], revision:['Change requested','att'], unreadable:['Could not read','bad'], preview:['Preview sent',''], hold_placed:['Needs your OK','att'],
-  accepted:['Confirmed, paid','ok'], printing:['Printing','ok'], ready:['Ready','ok'], collected:['Collected',''], delivered:['File sent','ok'], declined:['Declined','bad'] };
+  accepted:['Confirmed, paid','ok'], printing:['Printing','ok'], ready:['Ready','ok'], collected:['Collected',''], delivered:['File sent','ok'], declined:['Declined','bad'], lapsed:['Hold lapsed','bad'] };
 function pill(o){ var s=STATUS[o.status]||['?','']; var t=s[0]; if(o.status==='ready') t=o.delivery==='post'?'Posted':'Ready for pickup'; if(o.status==='received' && o.aiErr) t='Read failed'; return '<span class="pill '+s[1]+'">'+t+'</span>'; }
 
 /* ---------- 3D viewer ---------- */
@@ -208,8 +208,10 @@ var home = { tree:false };
 document.addEventListener('click',function(e){ var b=e.target.closest('[data-hero]'); if(!b) return; home.tree = b.getAttribute('data-hero')==='tree'; renderHome(); });
 function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
-  $('#price-print').textContent='From '+money(p.min);
-  $('#price-print-note').textContent='Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. You see your exact price with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
+  var flat=!(+p.perGram>0) && +p.fee<=+p.min;
+  $('#price-print').textContent=(flat?'':'From ')+money(p.min);
+  $('#price-print-note').textContent=(flat?'One price for any home that fits the printer at 1:100 or 1:150, with the lot and landscaping. ':'Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. ')+'You see your model with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
+  $$('.from-word').forEach(function(el){ el.textContent=flat?'':'from '; });
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
   var tr=built(treeOf(SAMPLE),0.8);
@@ -362,7 +364,7 @@ async function readNow(id){
 function timeline(o){
   var steps = o.choice==='stl' ? ['Plans received','Preview ready','Card hold placed','Confirmed and charged','File sent']
     : ['Plans received','Preview ready','Card hold placed','Confirmed and charged','Printing', o.delivery==='post'?'Posted':'Ready for pickup'];
-  var at = {received:0,revision:0,unreadable:0,preview:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2}[o.status];
+  var at = {received:0,revision:0,unreadable:0,preview:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2,lapsed:2}[o.status];
   var fin = o.status==='collected'||o.status==='delivered'||o.status==='ready';
   return '<ol class="tl">'+steps.map(function(s,i){ return '<li class="'+(i<at||(fin&&i===at)?'done':i===at?'now':'')+'">'+s+'</li>'; }).join('')+'</ol>';
 }
@@ -449,7 +451,7 @@ function renderOrder(){
   if(o.status==='preview' && ui.pay){
     var t=totalsOf(o,o.choice,o.delivery);
     h=head+'<div class="split" style="margin-top:22px"><div class="stack"><span class="eyebrow">Step 3 of 4</span><h3>Card hold</h3>'
-     +'<p class="muted">A hold of '+money2(t.total)+' is placed on your card now. Nothing is charged until Jono confirms your job, usually within 72 hours. If he can\'t take it on, the hold is released.</p>'
+     +'<p class="muted">A hold of '+money2(t.total)+' is placed on your card now. Nothing is charged until Jono confirms your job, within 24 hours. If he can\'t take it on, or doesn\'t confirm in time, the hold is released.</p>'
      +'<div class="cardmock"><div class="note warn"><b>Test mode.</b> This is a pretend payment page. No card details are collected and nothing is charged. The test card is filled in for you.</div>'
      +'<div class="field"><label for="pay-num">Card number</label><input type="text" id="pay-num" class="mono" value="4242 4242 4242 4242" readonly></div>'
      +'<div class="grid2"><div class="field"><label for="pay-exp">Expiry</label><input type="text" id="pay-exp" class="mono" value="12 / 34" readonly></div><div class="field"><label for="pay-cvc">CVC</label><input type="text" id="pay-cvc" class="mono" value="123" readonly></div></div></div>'
@@ -462,7 +464,7 @@ function renderOrder(){
     $('#pay-back').addEventListener('click',function(){ ui.pay=false; renderOrder(); });
     $('#pay-go').addEventListener('click',function(){
       var b=this; b.disabled=true; ui.busy='hold';
-      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. Jono has 72 hours to confirm.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
+      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. Jono has 24 hours to confirm.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
     });
     return;
   }
@@ -486,8 +488,10 @@ function renderOrder(){
      +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Nothing is charged until Jono confirms.</span></div>')
      +((!o.revUsed&&ui.step==='go')?'<p class="small"><button class="btn ghost sm" id="go-back">Back: I would like changes instead</button></p>':'');
   } else if(o.status==='hold_placed'){
-    right='<h3>Hold placed. Waiting on Jono.</h3><p class="muted">A hold of '+money2(o.total)+' is on your card. Jono confirms by <b>'+when(o.holdAt+72*3600e3)+'</b>. If he doesn\'t, the hold drops off by itself.</p>'+timeline(o)
+    right='<h3>Hold placed. Waiting on Jono.</h3><p class="muted">A hold of '+money2(o.total)+' is on your card. Jono reviews it and confirms by <b>'+when(o.holdAt+24*3600e3)+'</b>. If he doesn\'t, the hold is released by itself and nothing is charged.</p>'+timeline(o)
      +'<p class="muted small">This page updates by itself when he confirms.</p>';
+  } else if(o.status==='lapsed'){
+    right='<h3>The hold has lapsed</h3><div class="note bad">Jono did not confirm within 24 hours, so the hold on your card has been released and nothing was charged. Reply to your confirmation or upload again to start over.</div>';
   } else if(o.status==='declined'){
     right='<h3>Sorry, I can\'t make this one</h3><div class="note bad">'+esc(o.declineReason||'Jono could not take this job on.')+' The hold on your card has been released and nothing was charged.</div>';
   } else {
@@ -639,7 +643,7 @@ function renderQueue(){
     } else if(o.params){
       d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8).flags)+estTable(o.quote));
       if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn;
-      if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+72*3600e3)+' or the hold lapses.</div>'
+      if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+24*3600e3)+' or the hold lapses.'+(o.emailed?' Order email to you: '+esc(o.emailed)+'.':'')+'</div>'
         +'<div class="row"><button type="button" class="btn" id="q-accept">Accept and charge '+money2(o.total)+'</button></div>'
         +'<div class="row"><div class="field" style="flex:1 1 220px"><label for="q-reason">Reason if declining</label><select id="q-reason"><option>The plans did not have enough detail to model this house well.</option><option>This roof is too complex for the simple model right now.</option><option>The printer is booked out for the next few weeks.</option></select></div><button type="button" class="btn danger" id="q-decline">Decline and release hold</button></div>';
       var nxt={accepted:['printing','Start printing'],printing:['ready',o.delivery==='post'?'Mark posted':'Mark ready for pickup'],ready:o.delivery==='post'?null:['collected','Mark collected']}[o.status];

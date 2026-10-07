@@ -5,7 +5,19 @@ import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
 const G = globalThis.HouseGen;
-const DEFAULT_PRICING = { min: 250, fee: 150, perGram: 1.2, stl: 30, tree: 60 };
+const DEFAULT_PRICING = { min: 300, fee: 300, perGram: 0, stl: 30, tree: 60 };   // printed model: one price, A$300
+const REVIEW_MS = 24 * 3600e3;   // the owner has 24 hours to accept an order before the hold lapses
+/* A hold not accepted within 24 hours lapses: the card hold is released and nothing is charged. */
+const lapse = (o) => { if (o && o.status === 'hold_placed' && Date.now() - (o.holdAt || 0) > REVIEW_MS) { o.status = 'lapsed'; o.decidedAt = o.holdAt + REVIEW_MS; return true; } return false; };
+/* Email the owner. Sends through Resend when RESEND_API_KEY is set; without it nothing is sent and the order still goes through. */
+async function emailOwner(env, subject, text) {
+  if (!env.RESEND_API_KEY) return 'not set up';
+  try {
+    const r = await fetch((env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', { method: 'POST', headers: { authorization: 'Bearer ' + env.RESEND_API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ from: env.EMAIL_FROM || 'House Models <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || 'jonathan@binbypass.com'], subject, text }) });
+    return r.ok ? 'sent' : 'failed ' + r.status;
+  } catch (e) { return 'failed'; }
+}
 const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
 const POST = [[0.25, 10.2], [0.5, 11.7], [1, 16.0], [3, 20.25], [5, 24.45]];
@@ -151,7 +163,7 @@ function totals(o) {
   const ship = o.choice === 'stl' || o.delivery !== 'post' ? 0 : tree ? o.quote.tree.ship.cost : o.quote.ship.cost;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
-const publicView = (o) => { const { key, ip, busy, reads, ...rest } = o; return rest; };
+const publicView = (o) => { const { key, ip, busy, reads, emailed, ...rest } = o; return rest; };
 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
@@ -326,7 +338,11 @@ async function handle(request, env) {
     const tries = 'adm:' + today + ':' + ip;
     if (((await db.load(tries)) || 0) >= PASSCODE_TRIES) return fail(429, 'cap', 'Too many wrong tries from this connection today. Come back tomorrow.');
     if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) { await db.bump(tries, PASSCODE_TRIES); return fail(401, 'unauthorised', 'Wrong passcode.'); }
-    if (path === '/api/admin/orders' && m === 'GET') return json({ orders: await db.scan('o:'), pricing });
+    if (path === '/api/admin/orders' && m === 'GET') {
+      const orders = await db.scan('o:');
+      for (const o of orders) if (lapse(o)) await db.save('o:' + o.id, o);
+      return json({ orders, pricing });
+    }
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
       for (const k of ['min', 'fee', 'perGram', 'stl', 'tree']) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
@@ -335,6 +351,7 @@ async function handle(request, env) {
     const am = path.match(/^\/api\/admin\/orders\/([A-Z0-9-]{4,12})$/);
     if (am && m === 'POST') {
       const o = await db.load('o:' + am[1]); if (!o) return fail(404, 'not_found', 'No such order.');
+      if (lapse(o)) await db.save('o:' + o.id, o);
       const b = await body(), act = b.action;
       if (act === 'accept' && o.status === 'hold_placed') { o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); }
       else if (act === 'decline' && o.status === 'hold_placed') { o.status = 'declined'; o.declineReason = str(b.reason, 200); o.decidedAt = Date.now(); }
@@ -370,6 +387,7 @@ async function handle(request, env) {
   if (om) {
     const k = 'o:' + om[1], o = await db.load(k);
     if (!o || !sameKey(url.searchParams.get('k'), o.key)) return fail(404, 'not_found', 'That order link is not right. Check it and try again.');
+    if (lapse(o)) await db.save(k, o);
     const step = om[2] || '';
     if (!step && m === 'GET') return json({ order: publicView(o) });
     if (m !== 'POST') return fail(405, 'method', 'Not allowed.');
@@ -431,7 +449,21 @@ async function handle(request, env) {
       const b = await body();
       o.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
       Object.assign(o, totals(o)); o.holdAt = Date.now(); o.status = 'hold_placed';
-      await db.save(k, o); return json({ order: publicView(o) });
+      await db.save(k, o);
+      const what = { print: 'Printed model', tree: 'Christmas tree version', stl: 'Print files only' }[o.choice] || o.choice;
+      const by = new Date(o.holdAt + REVIEW_MS).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      const site = url.origin;
+      o.emailed = await emailOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2),
+        'New order to review.\n\n'
+        + 'Order: ' + o.id + '\nName: ' + o.name + '\nEmail: ' + o.email + '\nHouse: ' + o.addr + (o.suburb ? ', ' + o.suburb : '') + '\n'
+        + 'Ordered: ' + what + (o.choice === 'stl' ? '' : ', ' + (o.delivery === 'post' ? 'Australia Post' : 'pickup from Ferny Hills')) + '\n'
+        + 'Total held: A$' + (+o.total).toFixed(2) + (o.ship ? ' (includes A$' + (+o.ship).toFixed(2) + ' postage)' : '') + '\n'
+        + (o.quote ? 'Model: 1:' + o.quote.scale + ', ' + o.quote.size.join(' x ') + ' mm, about ' + o.quote.grams + ' g, about ' + o.quote.hours + ' h to print\n' : '')
+        + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
+        + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
+        + 'Review it: ' + site + '/#queue (Owner sign-in)\n');
+      await db.save(k, o);
+      return json({ order: publicView(o) });
     }
   }
   return fail(404, 'not_found', 'Not found.');
