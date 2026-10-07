@@ -90,13 +90,15 @@ function sanitise(j) {
     name: str(b.name || 'Block ' + (i + 1), 40), x: num(b.x, 0, -200, 200), y: num(b.y, 0, -200, 200), w: num(b.w, 0, 0, 80), d: num(b.d, 0, 0, 80),
     storeys: Math.round(num(b.storeys, 1, 1, 3)), storeyH: num(b.storeyH, 2.7, 2.1, 6), roof: ['hip', 'gable', 'skillion', 'flat'].includes(b.roof) ? b.roof : 'hip',
     pitch: num(b.pitch, 22.5, 0, 50), eave: num(b.eave, 0.6, 0, 1.5), ridge: ['ew', 'ns'].includes(b.ridge) ? b.ridge : 'auto', high: SIDES.includes(b.high) ? b.high : 'n',
-    open: b.open === true, post: num(b.post, 0.1, 0.05, 0.5), wall: WALLS.includes(b.wall) ? b.wall : 'render', roofMat: ['tile', 'metal'].includes(b.roofMat) ? b.roofMat : 'tile',
+    open: b.open === true, post: num(b.post, 0.1, 0.05, 0.5),
+    roofWith: b.open === true && typeof b.roofWith === 'string' && b.roofWith.trim() ? str(b.roofWith, 40) : null,
+    posts: b.open === true && Array.isArray(b.posts) ? b.posts.slice(0, 12).filter((q) => q && typeof q === 'object').map((q) => ({ x: num(q.x, 0, -200, 200), y: num(q.y, 0, -200, 200), w: num(q.w, 0.1, 0.05, 1.5), d: num(q.d, 0.1, 0.05, 1.5) })) : [], wall: WALLS.includes(b.wall) ? b.wall : 'render', roofMat: ['tile', 'metal'].includes(b.roofMat) ? b.roofMat : 'tile',
     openings: (Array.isArray(b.openings) ? b.openings : []).slice(0, 30).map((o) => { o = o || {}; const sill = num(o.sill, 0.9, 0, 4); return {
       side: side(o.side), at: num(o.at, 0, 0, 80), w: num(o.w, 1, 0.3, 8), sill, head: num(o.head, 2.1, sill + 0.3, 6),
       kind: ['window', 'door', 'garage'].includes(o.kind) ? o.kind : 'window', storey: Math.round(num(o.storey, 1, 1, 3)) }; }),
     cladding: (Array.isArray(b.cladding) ? b.cladding : []).slice(0, 24).filter((z) => z && WALLS.includes(z.kind)).map((z) => { const z0 = num(z.z0, 0, 0, 12); return {
       side: side(z.side), at: num(z.at, 0, 0, 80), w: num(z.w, 99, 0.3, 99), z0, z1: num(z.z1, 99, z0 + 0.2, 99), kind: z.kind, board: num(z.board, z.kind === 'weatherboard' ? 0.18 : 0.15, 0.08, 0.4) }; }) }; })
-    .filter((b) => b.w >= 1 && b.d >= 1);
+    .filter((b) => (b.open ? b.w >= 0.6 && b.d >= 0.6 : b.w >= 1 && b.d >= 1));
   if (!blocks.length || blocks.every((b) => b.open)) return null;
   const span = (lo, hi) => Math.max(...blocks.map(hi)) - Math.min(...blocks.map(lo));
   if (span((b) => b.x, (b) => b.x + b.w) > 80 || span((b) => b.y, (b) => b.y + b.d) > 80) return null;
@@ -154,7 +156,7 @@ const publicView = (o) => { const { key, ip, busy, reads, ...rest } = o; return 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
   + '{"readable": true, "confidence": 0.8, "sheets": [{"page": 1, "kind": "floor plan"}],\n'
-  + ' "blocks": [{"name": "Main house", "x": 0, "y": 0, "w": 14.2, "d": 9.1, "storeys": 1, "storeyH": 2.7, "roof": "hip", "pitch": 22.5, "eave": 0.6, "ridge": "auto", "high": "n", "open": false, "post": 0.1,\n'
+  + ' "blocks": [{"name": "Main house", "x": 0, "y": 0, "w": 14.2, "d": 9.1, "storeys": 1, "storeyH": 2.7, "roof": "hip", "pitch": 22.5, "eave": 0.6, "ridge": "auto", "high": "n", "open": false, "post": 0.1, "posts": [], "roofWith": null,\n'
   + '   "wall": "brick", "roofMat": "tile",\n'
   + '   "cladding": [{"side": "e", "at": 0, "w": 3.8, "z0": 0.9, "z1": 2.7, "kind": "weatherboard", "board": 0.18}],\n'
   + '   "openings": [{"side": "s", "at": 1.2, "w": 1.8, "sill": 0.9, "head": 2.1, "kind": "window", "storey": 1}, {"side": "e", "at": 0.6, "w": 4.8, "sill": 0, "head": 2.2, "kind": "garage", "storey": 1}]}],\n'
@@ -170,7 +172,8 @@ const SHAPE = 'Reply with only one JSON object, no other text, in exactly this s
   + '- storeys: 1 to 3. storeyH: floor to top of wall for one storey (from the elevations; 2.7 if not shown). For a house on stumps, add the stump height to storeyH and say so.\n'
   + '- roof: "hip", "gable", "skillion" or "flat". pitch: degrees. eave: overhang in metres (0 for parapets). ridge (gable only): "ew", "ns" or "auto". high (skillion only): the highest side.\n'
   + '- A wing that joins another block must overlap it by at least half the wing\'s width, so its roof runs into the other roof.\n'
-  + '- open: true for a roofed structure without walls (alfresco, porch, carport, verandah) under the house roof. It stands on posts at its corners. post: post width in metres.\n'
+  + '- open: true for a roofed structure without walls (alfresco, porch, carport, verandah). Its x, y, w, d cover the roofed floor area out to its posts or piers, not the eave. post: post width in metres. posts: every post and pier drawn for it, as {"x", "y", "w", "d"} rectangles in the same house frame as blocks; leave the list empty only if none are drawn, and then a post goes at each free corner. roofWith: the name of the enclosed block whose roof continues over it (a porch under the main roof or a wing roof), or null if it has a roof of its own.\n'
+  + '- Front entry: find the entry door on the floor plan and the front elevation. If it is set back behind the house face, there is a porch: the hatched or labelled porch, entry or under-eave area in front of the door is an open block from the door wall to the front line, with roofWith set and its piers in posts. A rendered or brick pier standing at the porch edge is a post or pier at the front line, not a cladding area on the wall behind it. Elevations do not show depth: use the floor plan to tell a pier standing forward from a panel on a wall.\n'
   + '- wall: the main external finish of that block: "brick", "render", "weatherboard" (horizontal boards, including Hardiplank, Linea, Scyon weatherboards), "vertical" (vertical boards, battens, Axon, Stria) or "stone".\n'
   + '- cladding: every area of a different finish on that block\'s outside walls, from the elevations and the facade material table. side and at as for openings, w its length along the wall, z0 and z1 its bottom and top above ground. board: board or batten spacing in metres if shown.\n'
   + '- roofMat: "tile" or "metal" (Colorbond, Kliplok, corrugated, standing seam).\n'
@@ -208,8 +211,8 @@ const VERIFY = 'Now review your answer against the plans as a second, independen
   + '- every block size and position against the floor plan dimension strings, and the overall dimensions;\n'
   + '- wall height, roof form, pitch and eave against the elevations and sections;\n'
   + '- every window, door and garage door: is each one drawn on the plans in that wall, is its position along the wall right, and is any drawn opening missing;\n'
-  + '- every finish area against the elevations and material table;\n'
-  + '- the lot size, the house position on the lot, and every fence, surface, tree and fixture on the site and landscape plans.\n'
+  + '- every finish area against the elevations and material table;\n'  + '- the front entry: the entry door, the porch floor area in front of it, the roof over it (roofWith) and every pier and post at its drawn position on the floor plan;\n'
+  + '- the lot size, the house position on the lot, and every fence, surface and fixture on the site and landscape plans.\n'
   + 'Correct every mistake you find. Then reply with the complete corrected JSON object in the same shape, nothing else. In "checks", list what you verified and anything you corrected, for example "Corrected: bed 2 window moved from 9.9 to 10.1 m along the south wall".';
 function revisePrompt(o, note) {
   const { scale, ...desc } = o.params;

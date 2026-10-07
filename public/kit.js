@@ -158,24 +158,48 @@ export function build(params, opts) {
   const closed = blocks.filter((b) => !b.open);
   const inside = (x, y) => closed.some((b) => x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.d);
 
+  // a porch or entry whose roof is the continuation of a house block's roof: that block's roof spans both
+  const byName = (n) => closed.find((c) => c.name === n);
+  const covered = (x, y) => inside(x, y) || blocks.some((o) => o.open && x > o.x - 1e-6 && x < o.x + o.w + 1e-6 && y > o.y - 1e-6 && y < o.y + o.d + 1e-6);
+  for (const b of blocks) {
+    b._roof = { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.d, own: true };
+    delete b._under;
+  }
+  for (const o of blocks) {
+    const h = o.open && o.roofWith ? byName(o.roofWith) : null;
+    if (!h) continue;
+    const r = h._roof, R = { x0: Math.min(r.x0, o.x), y0: Math.min(r.y0, o.y), x1: Math.max(r.x1, o.x + o.w), y1: Math.max(r.y1, o.y + o.d), own: true };
+    // only when the widened roof still sits over house or porch everywhere, so it never roofs open ground
+    let ok = true;
+    for (let i = 0; i <= 12 && ok; i++) for (let j = 0; j <= 12 && ok; j++) {
+      const x = R.x0 + 0.02 + (R.x1 - R.x0 - 0.04) * i / 12, y = R.y0 + 0.02 + (R.y1 - R.y0 - 0.04) * j / 12;
+      if (!covered(x, y)) ok = false;
+    }
+    if (ok) { h._roof = R; o._under = true; }
+  }
+
   // ---------- massing: walls and roofs
   for (const b of blocks) {
     const st = Math.max(1, Math.min(3, Math.round(+b.storeys || 1))), sH = Math.max(2, +b.storeyH || 2.7), H = st * sH;
     const e = Math.max(0, +b.eave || 0), f = Math.max(k(0.8), 0.15), tan = Math.tan(Math.max(0, Math.min(60, +b.pitch || 22.5)) * Math.PI / 180);
     const x0 = b.x, y0 = b.y, x1 = b.x + b.w, y1 = b.y + b.d;
-    const ex0 = x0 - e, ey0 = y0 - e, ex1 = x1 + e, ey1 = y1 + e, W = ex1 - ex0, D = ey1 - ey0;
+    const R = b._roof, rx0 = R.x0, ry0 = R.y0, rx1 = R.x1, ry1 = R.y1;
+    const ex0 = rx0 - e, ey0 = ry0 - e, ex1 = rx1 + e, ey1 = ry1 + e, W = ex1 - ex0, D = ey1 - ey0;
     b._H = H; b._sH = sH;
     if (!b.open) solids.push(box(T, x0, y0, -0.05, x1, y1, H));
     else {
       // open alfresco, porch or carport: a post at each corner that is not inside the house
-      const p = Math.max(k(1.8), +b.post || 0.1);
-      for (const [px, py] of [[x0, y0], [x1 - p, y0], [x1 - p, y1 - p], [x0, y1 - p]]) if (!inside(px + p / 2, py + p / 2)) solids.push(box(T, px, py, -0.05, px + p, py + p, H));
+      // posts and piers where the plans draw them, otherwise one at each free corner
+      const p = Math.max(k(1.8), +b.post || 0.1), ps = Array.isArray(b.posts) ? b.posts.filter((q) => q && +q.w > 0 && +q.d > 0) : [];
+      const list = ps.length ? ps.map((q) => [+q.x, +q.y, Math.max(k(1.8), +q.w), Math.max(k(1.8), +q.d)]) : [[x0, y0, p, p], [x1 - p, y0, p, p], [x1 - p, y1 - p, p, p], [x0, y1 - p, p, p]];
+      for (const [px, py, pw, pd] of list) if (!inside(px + pw / 2, py + pd / 2)) solids.push(box(T, px, py, -0.05, px + pw, py + pd, H + 0.02));
+      if (b._under) continue;   // roofed by the house block it belongs to
     }
     // roof as a convex hull: eave outline, fascia, ridge; closed blocks also carry a 45 degree soffit from the wall line
     const pts = [];
     const ring = (z, a0, b0, a1, b1) => { pts.push([a0, b0, z], [a1, b0, z], [a1, b1, z], [a0, b1, z]); };
     const soffit = b.open ? 0 : Math.min(e, H - 0.3);
-    if (soffit > 0) ring(H - soffit, x0, y0, x1, y1);
+    if (soffit > 0) ring(H - soffit, rx0, ry0, rx1, ry1);
     ring(H, ex0, ey0, ex1, ey1); ring(H + f, ex0, ey0, ex1, ey1);
     const roof = b.roof || 'hip', top = H + f;
     if (roof === 'hip') {
@@ -196,7 +220,8 @@ export function build(params, opts) {
   // ---------- facades: openings, frames and cladding
   let nOpen = 0, nGroove = 0;
   const faceOut = (b, side, a, bb) => {
-    const o = EPS + 0.1, test = [a + 0.05, (a + bb) / 2, bb - 0.05];
+    // a and bb run along the wall from the block's corner; test in house coordinates
+    const o = EPS + 0.1, u0 = side === 's' || side === 'n' ? b.x : b.y, test = [u0 + a + 0.05, u0 + (a + bb) / 2, u0 + bb - 0.05];
     return !test.some((u) => side === 's' ? inside(u, b.y - o) : side === 'n' ? inside(u, b.y + b.d + o) : side === 'w' ? inside(b.x - o, u) : inside(b.x + b.w + o, u));
   };
   const faceC = (b, side) => (side === 's' ? b.y : side === 'n' ? b.y + b.d : side === 'w' ? b.x : b.x + b.w);
