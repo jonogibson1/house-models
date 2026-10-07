@@ -340,7 +340,7 @@ async function startOrder(f, plans){
 async function readNow(id){
   if(!ui.pending) ui.pending={ addr:cur?cur.addr:'', msg:'' };
   ui.err=''; renderOrder();
-  setPending('Reading your plans and working out the house. Your plans are read, then checked a second time against the drawings. This usually takes three to five minutes.');
+  setPending('Reading your plans and working out the house. Your plans are read, then checked a second time against the drawings. This usually takes five to eight minutes. Keep this page open.');
   try{
     var res=await api('POST', opath(id,'/read'), memFrag[id]||'', true);
     cur=res.order; ui.pending=null; renderOrder();
@@ -375,7 +375,7 @@ function detailRows(o){
   var ops=[d.win?plural(d.win,'window'):'', d.door?plural(d.door,'door'):'', d.garage?plural(d.garage,'garage door'):''].filter(Boolean).join(', ');
   if(ops) h+='<dt>Openings</dt><dd>'+ops+'</dd>';
   var f=Object.keys(d.fin).map(function(k){ return FIN[k]||k; }); if(f.length) h+='<dt>Walls</dt><dd>'+esc(f.join(', '))+'</dd>';
-  if(d.open) h+='<dt>Open areas</dt><dd>'+plural(d.open,'alfresco or porch')+' on posts</dd>';
+  if(d.open) h+='<dt>Open areas</dt><dd>'+(d.open===1?'1 alfresco, porch or carport':d.open+' alfrescos, porches or carports')+' on posts</dd>';
   if(d.site){
     h+='<dt>Lot</dt><dd>'+(+d.site.w).toFixed(1)+' x '+(+d.site.d).toFixed(1)+' m</dd>';
     var land=[d.site.cover].concat(d.site.surf).filter(function(v,i,a){ return v && a.indexOf(v)===i; }).join(', ');
@@ -459,7 +459,7 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is the shape, roof, windows and doors your printed model will have. If something is off, ask for one change before you order.</p>'+facts(o,ch)
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is your house and lot as the printed model will have them, built from your plans. If something is off, ask for one change before you order.</p>'+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>What was checked'+(o.ai.reviewed?' in the second review':'')+'</summary>'+ulist(o.ai.checks)+'</details>':'')
      +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
