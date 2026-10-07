@@ -9,6 +9,26 @@ const DEFAULT_PRICING = { min: 300, fee: 300, perGram: 0, stl: 30, tree: 60 };  
 const REVIEW_MS = 24 * 3600e3;   // the owner has 24 hours to accept an order before the hold lapses
 /* A hold not accepted within 24 hours lapses: the card hold is released and nothing is charged. */
 const lapse = (o) => { if (o && o.status === 'hold_placed' && Date.now() - (o.holdAt || 0) > REVIEW_MS) { o.status = 'lapsed'; o.decidedAt = o.holdAt + REVIEW_MS; return true; } return false; };
+/* Text the owner. A real SMS through Twilio when TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM and NOTIFY_PHONE are set,
+   and a phone push through ntfy when NTFY_TOPIC is set. Either, both or neither; an order never waits on them. */
+async function textOwner(env, msg) {
+  const out = [];
+  if (env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM && env.NOTIFY_PHONE) {
+    try {
+      const r = await fetch((env.TWILIO_BASE_URL || 'https://api.twilio.com') + '/2010-04-01/Accounts/' + env.TWILIO_SID + '/Messages.json', { method: 'POST',
+        headers: { authorization: 'Basic ' + btoa(env.TWILIO_SID + ':' + env.TWILIO_TOKEN), 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ To: env.NOTIFY_PHONE, From: env.TWILIO_FROM, Body: msg.slice(0, 300) }) });
+      out.push('SMS ' + (r.ok ? 'sent' : 'failed ' + r.status));
+    } catch (e) { out.push('SMS failed'); }
+  }
+  if (env.NTFY_TOPIC) {
+    try {
+      const r = await fetch((env.NTFY_BASE_URL || 'https://ntfy.sh') + '/' + encodeURIComponent(env.NTFY_TOPIC), { method: 'POST', headers: { title: 'New house model order', priority: 'high' }, body: msg });
+      out.push('push ' + (r.ok ? 'sent' : 'failed ' + r.status));
+    } catch (e) { out.push('push failed'); }
+  }
+  return out.length ? out.join(', ') : 'not set up';
+}
 /* Email the owner. Sends through Resend when RESEND_API_KEY is set; without it nothing is sent and the order still goes through. */
 async function emailOwner(env, subject, text) {
   if (!env.RESEND_API_KEY) return 'not set up';
@@ -163,7 +183,7 @@ function totals(o) {
   const ship = o.choice === 'stl' || o.delivery !== 'post' ? 0 : tree ? o.quote.tree.ship.cost : o.quote.ship.cost;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
-const publicView = (o) => { const { key, ip, busy, reads, emailed, ...rest } = o; return rest; };
+const publicView = (o) => { const { key, ip, busy, reads, emailed, texted, ...rest } = o; return rest; };
 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
@@ -462,6 +482,7 @@ async function handle(request, env) {
         + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
         + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
         + 'Review it: ' + site + '/#queue (Owner sign-in)\n');
+      o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue');
       await db.save(k, o);
       return json({ order: publicView(o) });
     }

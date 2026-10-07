@@ -32,6 +32,16 @@ Settings in `wrangler.jsonc`:
 |---|---|---|
 | `MODEL` | `claude-opus-5-5` | Model that reads the plans. |
 
+Order alerts. Each new order is held for 24 hours; if it is not accepted in that time the hold lapses and nothing is charged. When an order comes in the owner is told by any of these that are set up (as secrets on the Worker, Settings, Variables and Secrets). The order never waits on them, and the owner queue shows whether each was sent.
+
+| Secret | Meaning |
+|---|---|
+| `RESEND_API_KEY` | Email through Resend. With the default sender, the Resend account must be signed up with the address the email goes to. |
+| `NOTIFY_EMAIL` | Optional. Where order emails go. Default `jonathan@binbypass.com`. |
+| `EMAIL_FROM` | Optional. Sender, once a domain is verified in Resend. Default `House Models <onboarding@resend.dev>`. |
+| `TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_FROM`, `NOTIFY_PHONE` | SMS through Twilio. `NOTIFY_PHONE` in +61 form. `TWILIO_FROM` a Twilio number or an alphanumeric sender name. |
+| `NTFY_TOPIC` | Phone push through the free ntfy app. Use a long random topic name and keep it secret: anyone who knows it can read and send to it. |
+
 There are no spend caps. Every plan read and change request is billed to the API key, so the monthly spend limit on the key in the Anthropic Console is the only brake. To add one later, set either of these as a variable on the Worker:
 
 | Variable | Meaning |
