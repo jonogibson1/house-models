@@ -100,8 +100,8 @@ function Viewer(spin){
     this.r.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
     this.scene = new THREE.Scene();
     this.cam = new THREE.PerspectiveCamera(32,4/3,1,5000);
-    this.scene.add(new THREE.HemisphereLight(0xffffff,0x3a5248,0.95));
-    var d=new THREE.DirectionalLight(0xffffff,0.75); d.position.set(120,260,160); this.scene.add(d);
+    this.scene.add(new THREE.HemisphereLight(0xffffff,0x3a5248,0.5)); var d2=new THREE.DirectionalLight(0xffffff,0.25); d2.position.set(-200,120,-150); this.scene.add(d2);
+    var d=new THREE.DirectionalLight(0xffffff,0.85); d.position.set(220,160,60); this.scene.add(d);
     this.world = new THREE.Group(); this.world.rotation.x=-Math.PI/2; this.scene.add(this.world);
     this.model = new THREE.Group(); this.world.add(this.model);
     this.deco = new THREE.Group(); this.world.add(this.deco);
@@ -137,7 +137,7 @@ Viewer.prototype.set=function(result){
   var cx=result.size[0]/2, cy=result.size[1]/2;
   result.parts.forEach(function(p){
     var g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.BufferAttribute(p.tris,3)); g.computeVertexNormals();
-    var m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(partColour(p)),roughness:p.mat==='glass'?0.35:0.85,metalness:0,flatShading:true}));
+    var m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:new THREE.Color(partColour(p)),roughness:0.9,metalness:0,flatShading:true}));
     m.userData.part=p; m.position.set(-cx,-cy,p.z0); self.model.add(m);
   });
   var span=Math.max(260,Math.max(result.size[0],result.size[1])*1.6);
@@ -166,7 +166,8 @@ var V = { hero:null, order:null, queue:null };
 var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherboard:'#dcdfd8', vertical:'#cfc6b4', stone:'#b4a58c', glass:'#2c3a44', door:'#6d5a48', post:'#efe9de',
   base:'#34383b', turf:'#5f7f45', garden:'#6b4f36', mulch:'#7a5a3a', pebbles:'#c3bdb2', concrete:'#bdbbb5', driveway:'#a8a6a0', path:'#d3cdc1', paving:'#c9bfae',
   deck:'#8b6a4a', pool:'#5aa8cf', gravel:'#bdb6a6', sand:'#e3d3a8', fence:'#9a7b5a', tree:'#3f6b3a', fixture:'#e6e2da' };
-function partColour(p){ return p.kind==='roof' ? cssVar('--roof') : (MATCOL[p.mat] || cssVar('--wall')); }
+/* The model prints in white only, so the preview shows it in white; detail reads from shading. */
+function partColour(p){ return '#e9e7e1'; }
 function viewer(name, spin){ if(!V[name]) V[name]=new Viewer(spin); return V[name]; }
 
 /* ---------- routing ---------- */
@@ -210,7 +211,7 @@ function renderHome(){
   $('#about-pic').innerHTML=PIC_SVG;
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
   $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
-    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. Everything on the plans is in it: brick, render and weatherboard, windows and doors, the tiled roof, the alfresco, driveway, garden, trees and fences. Drag to turn it.';
+    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. Printed in white, with everything on the plans shown in relief: brick coursing, weatherboards, windows and doors, the tiled roof, the alfresco, driveway, garden, trees and fences. Drag to turn it.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -463,7 +464,7 @@ function renderOrder(){
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>What was checked'+(o.ai.reviewed?' in the second review':'')+'</summary>'+ulist(o.ai.checks)+'</details>':'')
      +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
-     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in colour at 1:'+q.scale+' with everything on your plans. Yours to keep.</span></label>'
+     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in white at 1:'+q.scale+' with everything on your plans. Yours to keep.</span></label>'
      +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
@@ -498,11 +499,6 @@ function renderOrder(){
 }
 
 /* ---------- print files ---------- */
-/* Suggested filament for each part when the AMS holds four colours. Bambu Studio lets any part take any filament. */
-var SLOT = { lettering:'A, white', render:'A, white', weatherboard:'A, white', vertical:'A, white', post:'A, white', fixture:'A, white', path:'A, white', concrete:'A, white', paving:'A, white', sand:'A, white',
-  brick:'B, brick red', stone:'B, brick red', deck:'B, brick red', door:'B, brick red',
-  turf:'C, green', tree:'C, green', garden:'C, green', mulch:'C, green',
-  glass:'D, charcoal', driveway:'D, charcoal', fence:'D, charcoal', pebbles:'D, charcoal', gravel:'D, charcoal', pool:'D, charcoal', base:'D, charcoal' };
 function saveZip(o){
   toast('Building print files at full detail...');
   setTimeout(function(){
@@ -510,20 +506,16 @@ function saveZip(o){
     var p1=r.parts.filter(function(p){ return p.kind!=='roof'; }), roofs=r.parts.filter(function(p){ return p.kind==='roof'; });
     var org=[Infinity,Infinity,Infinity];
     p1.forEach(function(p){ for(k=0;k<3;k++) org[k]=Math.min(org[k], p.st.min[k]+(k===2?p.z0:0)); });
-    p1.forEach(function(p){
-      var t=p.tris; if(p.z0){ t=new Float32Array(p.tris); for(k=2;k<t.length;k+=3) t[k]+=p.z0; }
-      files.push({name:'plate-1-'+p.name+'.stl',data:G.stl(t,org)});
-    });
+    var n1=p1.reduce(function(a,p){ return a+p.tris.length; },0), all=new Float32Array(n1), at=0;
+    p1.forEach(function(p){ var t=p.tris; all.set(t,at); if(p.z0) for(k=at+2;k<at+t.length;k+=3) all[k]+=p.z0; at+=t.length; });
+    files.push({name:'plate-1-model.stl',data:G.stl(all,org)});
     roofs.forEach(function(p,i){ files.push({name:'plate-'+(2+i)+'-'+p.name+'.stl',data:G.stl(p.tris)}); });
     var L='\r\n', notes=(tree?'Christmas tree version ':'House model ')+o.id+L+o.addr+L+'Scale 1:'+r.scale+L+'Size '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled'+L+L
       +'All parts print flat side down with supports OFF. 0.2 mm layers, 2 walls, 10 to 15 percent infill.'+L+L
-      +'PLATE 1, one multi-colour print'+L
-      +'Select every plate-1 file and drag them into Bambu Studio together. When it asks whether to load them as a single object with multiple parts, say Yes.'+L
-      +'The parts share one origin, so they land assembled. Then give each part its filament:'+L
-      +p1.map(function(p){ return '  '+p.name+'.stl  '+(SLOT[p.mat]||'A, white')+'  ('+Math.ceil(p.grams)+' g)'; }).join(L)+L
-      +'With four AMS slots: A white, B brick red, C green, D charcoal. Swap any part to a different slot if you prefer.'+L+L
+      +'Everything prints in white. One filament, no colour changes.'+L+L
+      +'PLATE 1: plate-1-model.stl. The base, plinth lettering, walls, fences, trees and fixtures as one file, already assembled.'+L+L
       +'PLATE '+(roofs.length>1?'2 onwards':'2')+', the roof'+(roofs.length>1?'s, one per storey level':'')+L
-      +'Print in one colour, flat underside down. It drops onto the tapered pegs on top of the walls.'+L
+      +'White, flat underside down. It drops onto the tapered pegs on top of the walls.'+L
       +(tree?'Thread a ribbon down through the hole in the roof and the walls, knot it under the walls, and add a dab of glue between roof and walls.'+L:'')+L
       +'Estimated filament: '+Math.ceil(r.grams)+' g. Estimated print time: '+r.hours.toFixed(1)+' h. Both are rough figures; the slicer has the real ones.'+L;
     files.push({name:'README.txt',data:enc.encode(notes)});

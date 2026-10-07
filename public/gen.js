@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
   var BED = { x: 340, y: 320, z: 340 };
-  var K = { strip: 26, edge: 6, letter: 0.8, fascia: 0.8, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0, hole: 3.2, ornament: 75, reveal: 1.0, step: 0.25, margin: 10,
+  var K = { course: 0.86, ch: 0.25, cd: 0.15, strip: 26, edge: 6, letter: 0.8, fascia: 0.8, clear: 0.2, socket: 5.4, peg: 5.0, flat: 2.0, hole: 3.2, ornament: 75, reveal: 1.0, step: 0.25, margin: 10,
     panel: 0.6, skin: 1.2, groove: 0.3, gh: 0.5, gw: 0.4, base: 2.4, inlay: 0.6, tile: 3.0, tileH: 0.3, rib: 2.0, ribH: 0.3 };
   var WALLS = ['brick', 'render', 'weatherboard', 'vertical', 'stone'];
   function q(v) { return Math.round(v * 1e4) / 1e4; }
@@ -334,9 +334,11 @@
     return { parts: parts, detail: new Float32Array(detail) };
   }
 
+  /* White only: every wall finish, panel and post is the same material, so the walls come out as one closed part.
+     Finishes are told apart by relief: weatherboard and board grooves, brick coursing, smooth render. */
   function bodyGrid(bl, pegs, hole, ops, zones, W, D, fine) {
-    var bx = [0, W], by = [0, D], bz = [0], n, k, mats = [];
-    function code(m) { var i = mats.indexOf(m); if (i < 0) { mats.push(m); i = mats.length - 1; } return i + 1; }
+    var bx = [0, W], by = [0, D], bz = [0], n, k, mats = ['walls'];
+    function code() { return 1; }
     var posts = [];
     bl.forEach(function (b) {
       if (!b.open) { bx.push(b.x0, b.x1); by.push(b.y0, b.y1); bz.push(b.H); return; }
@@ -364,9 +366,12 @@
     });
     zones.forEach(function (z) {
       bz.push(z.z0, z.z1);
-      depthLines(z, [K.skin].concat(fine && z.mat === 'weatherboard' ? [K.groove / 2, K.groove] : []));
+      depthLines(z, [K.skin].concat(fine && z.mat === 'weatherboard' ? [K.groove / 2, K.groove] : fine && z.mat === 'brick' ? [K.cd] : []));
       if (fine && z.mat === 'weatherboard') {
         for (var zb = z.z0 + z.pitch; zb + K.gh < z.z1; zb += z.pitch) bz.push(zb, zb + K.gh / 2, zb + K.gh);
+      }
+      if (fine && z.mat === 'brick') {
+        for (var zc = z.z0 + K.course; zc + K.ch < z.z1; zc += K.course) bz.push(zc, zc + K.ch);
       }
       if (fine && z.mat === 'vertical') {
         var a0 = z.x ? z.x[0] : z.y[0], a1 = z.x ? z.x[1] : z.y[1];
@@ -401,6 +406,9 @@
             if (fine && z.mat === 'weatherboard') {
               var d1 = inward(z, cx, cy), lz = (cz - z.z0) % z.pitch;
               if (cz - z.z0 > z.pitch * 0.5 && d1 < K.groove && lz < K.gh && d1 < K.gh - lz) v = TEX;
+            } else if (fine && z.mat === 'brick') {
+              var lc = (cz - z.z0) % K.course;
+              if (cz - z.z0 > K.course * 0.5 && inward(z, cx, cy) < K.cd && lc < K.ch) v = TEX;
             } else if (fine && z.mat === 'vertical') {
               var d2 = inward(z, cx, cy), aa = ((z.x ? cx - z.x[0] : cy - z.y[0]) % z.pitch);
               if (d2 < K.groove && aa < K.gw && (z.x ? cx - z.x[0] : cy - z.y[0]) > z.pitch * 0.5) v = TEX;
@@ -471,22 +479,23 @@
   var SURFACES = ['turf', 'garden', 'mulch', 'pebbles', 'concrete', 'driveway', 'path', 'paving', 'deck', 'pool', 'gravel', 'sand'];
   function siteParts(site, bl, fine) {
     var W = site.x1 - site.x0, D = site.y1 - site.y0, xsv = [site.x0, site.x1], ysv = [site.y0, site.y1], areas = [], mats = [];
-    function code(m) { var i = mats.indexOf(m); if (i < 0) { mats.push(m); i = mats.length - 1; } return i + 1; }
     site.items.forEach(function (it) {
       if (SURFACES.indexOf(it.kind) < 0) return;
       var r = { x0: Math.max(site.x0, it.x), y0: Math.max(site.y0, it.y), x1: Math.min(site.x1, it.x + it.w), y1: Math.min(site.y1, it.y + it.d), mat: it.kind };
       if (r.x1 - r.x0 < 0.5 || r.y1 - r.y0 < 0.5) return;
       areas.push(r); xsv.push(r.x0, r.x1); ysv.push(r.y0, r.y1);
     });
-    var xs = axis(xsv, 0, site.x0, site.x1), ys = axis(ysv, 0, site.y0, site.y1), zs = [0, K.base - K.inlay, K.base];
-    var nx = xs.length - 1, ny = ys.length - 1, S = new Uint8Array(nx * ny * 2), baseC = code('base'), cover = code(site.cover);
+    /* White only: surfaces are told apart by height. Hard paving stands proud, beds and pools sit low, lawn is the datum. */
+    var LIFT = { driveway: 0.4, path: 0.4, concrete: 0.4, paving: 0.4, deck: 0.6, pebbles: 0.2, gravel: 0.2, garden: -0.4, mulch: -0.4, pool: -0.8, turf: 0, sand: 0 };
+    var xs = axis(xsv, 0, site.x0, site.x1), ys = axis(ysv, 0, site.y0, site.y1), zs = [0, K.base - 0.8, K.base - 0.4, K.base, K.base + 0.2, K.base + 0.4, K.base + 0.6];
+    var nx = xs.length - 1, ny = ys.length - 1, nz = zs.length - 1, S = new Uint8Array(nx * ny * nz);
     for (var j = 0; j < ny; j++) for (var i = 0; i < nx; i++) {
-      var cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2, m = cover;
-      for (var k = 0; k < areas.length; k++) { var a = areas[k]; if (cx > a.x0 && cx < a.x1 && cy > a.y0 && cy < a.y1) m = code(a.mat); }
-      if (closedAt(bl, cx, cy)) m = baseC;
-      S[j * nx + i] = baseC; S[(ny + j) * nx + i] = m;
+      var cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2, top = K.base + (LIFT[site.cover] || 0);
+      for (var k = 0; k < areas.length; k++) { var a = areas[k]; if (cx > a.x0 && cx < a.x1 && cy > a.y0 && cy < a.y1) top = K.base + (LIFT[a.mat] || 0); }
+      if (closedAt(bl, cx, cy)) top = K.base;
+      for (var l = 0; l < nz; l++) if ((zs[l] + zs[l + 1]) / 2 < top) S[(l * ny + j) * nx + i] = 1;
     }
-    var g = meshGrid(xs, ys, zs, S, mats), parts = g.parts.map(function (p) { return { kind: 'base', mat: p.mat, tris: p.tris }; });
+    var g = meshGrid(xs, ys, zs, S, ['base']), parts = g.parts.map(function (p) { return { kind: 'base', mat: 'base', tris: p.tris }; });
     var fence = [], trees = [], fix = [];
     site.items.forEach(function (it) {
       if (it.kind === 'fence' || it.kind === 'retaining' || it.kind === 'wall') {
@@ -629,7 +638,7 @@
     var body = bodyGrid(bl, pegs, hole, ops, zones, Math.max(W, Wb), Math.max(D, Db), fine);
     body.parts.forEach(function (pt, i) {
       var st = stats(pt.tris);
-      parts.push({ kind: 'body', mat: pt.mat, name: 'walls-' + pt.mat, label: labelOf(pt.mat), z0: lift, plate: 1, tris: pt.tris, detail: i === 0 ? body.detail : null, st: st, grams: grams(st) });
+      parts.push({ kind: 'body', mat: pt.mat, name: 'walls', label: 'Walls', z0: lift, plate: 1, tris: pt.tris, detail: i === 0 ? body.detail : null, st: st, grams: grams(st) });
     });
 
     // one roof piece per eave level
@@ -672,14 +681,14 @@
     var fits = (W <= BED.x && D <= BED.y) || (W <= BED.y && D <= BED.x);
     var minEave = Infinity, minSide = Infinity, nOpen = 0;
     bl.forEach(function (b) { if (b.e > 0) minEave = Math.min(minEave, b.e); if (!b.open) minSide = Math.min(minSide, b.x1 - b.x0, b.y1 - b.y0); if (b.open) nOpen++; });
-    if (ops.length) flags.push({ lvl: 'ok', text: ops.length + ' windows and doors cut ' + K.reveal + ' mm into the walls with 45 degree heads, each backed by a glass or door panel in its own part.' });
+    if (ops.length) flags.push({ lvl: 'ok', text: ops.length + ' windows and doors cut ' + K.reveal + ' mm into the walls with 45 degree heads, each with a panel set back behind it.' });
     if (zones.length) {
       var fm = {}; zones.forEach(function (z) { fm[z.mat] = 1; });
-      flags.push({ lvl: 'ok', text: 'Wall finishes as their own parts: ' + Object.keys(fm).join(', ') + '. Weatherboard and board cladding have 45 degree grooves.' });
+      flags.push({ lvl: 'ok', text: 'Wall finishes shown in relief: ' + Object.keys(fm).join(', ') + '. Weatherboard and board grooves have 45 degree tops; brick coursing is 0.15 mm deep, shallow enough to print clean.' });
     }
     if (fine && bl.some(function (b) { return b.roofMat === 'tile' || b.roofMat === 'metal'; })) flags.push({ lvl: 'ok', text: 'Roof surface textured as ' + bl.map(function (b) { return b.roofMat; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; }).join(' and ') + '.' });
     if (nOpen) flags.push({ lvl: 'ok', text: nOpen + ' open structure' + (nOpen > 1 ? 's' : '') + ' (alfresco, porch or carport) standing on corner posts under the roof.' });
-    if (site) flags.push({ lvl: 'ok', text: (site.lot ? 'Lot base ' : 'Base ') + Math.round(site.x1) + ' x ' + Math.round(site.y1) + ' mm' + (site.lot ? ' with ' + site.items.length + ' site items' : '') + ', and a plinth strip with the address, scale and north point in raised letters. Base, walls and site items print together as one multi-colour plate.' });
+    if (site) flags.push({ lvl: 'ok', text: (site.lot ? 'Lot base ' : 'Base ') + Math.round(site.x1) + ' x ' + Math.round(site.y1) + ' mm' + (site.lot ? ' with ' + site.items.length + ' site items' : '') + ', and a plinth strip with the address, scale and north point in raised letters. Base, walls and site items print together as one plate.' });
     flags.push(fits ? { lvl: 'ok', text: 'Fits the H2S bed (340 x 320 mm).' } : { lvl: 'bad', text: 'Too big for the H2S bed at 1:' + scale + '. Pick a smaller scale.' });
     flags.push({ lvl: 'ok', text: 'No supports needed. Every part prints flat side down, and every surface, including peg sockets, opening heads and grooves, rises at 45 degrees or steeper.' });
     if (levels.length > 1) flags.push({ lvl: 'warn', text: levels.length + ' roof pieces, one per storey level. Each prints flat.' });
