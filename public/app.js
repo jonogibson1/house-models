@@ -63,7 +63,7 @@ function api(method, path, body, raw){
   var offline='The site could not be reached. Check your connection and try again.';
   return fetch(path,opts).then(function(r){
     return r.json().catch(function(){ return null; }).then(function(j){
-      if(!r.ok || !j) throw { status:r.status, message:(j && j.error && j.error.message) || offline };
+      if(!r.ok || !j || j.error) throw { status:(j && j.error && j.error.code==='busy') ? 409 : r.ok ? 502 : r.status, message:(j && j.error && j.error.message) || offline };
       return j; });
   }, function(){ throw { status:0, message:offline }; });
 }

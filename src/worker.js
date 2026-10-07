@@ -41,6 +41,21 @@ const store = (env) => env.STORE.get(env.STORE.idFromName('main'));
 /* ---------- helpers ---------- */
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
 const fail = (status, code, message) => json({ error: { code, message } }, status);
+/* Slow steps answer at once with a streamed body: a space every 10 s keeps the connection open, then the JSON result.
+   Leading spaces are valid JSON, and a failure is sent as {error} in the same body. */
+function slow(work) {
+  const { readable, writable } = new TransformStream(), w = writable.getWriter();
+  const tick = setInterval(() => { w.write(enc.encode(' ')).catch(() => {}); }, 10000);
+  w.write(enc.encode(' ')).catch(() => {});
+  (async () => {
+    let out;
+    try { const r = await work(); out = await r.text(); }
+    catch (e) { console.log('slow step failed', e && (e.stack || e.message || e)); out = JSON.stringify({ error: { code: 'server', message: 'Something went wrong on the server. Try again.' } }); }
+    clearInterval(tick);
+    try { await w.write(enc.encode(out)); await w.close(); } catch (e) { /* the visitor left; the result is saved on the order anyway */ }
+  })();
+  return new Response(readable, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
+}
 const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 const day = () => new Date().toISOString().slice(0, 10);
 function rid(n, alphabet) { const b = crypto.getRandomValues(new Uint8Array(n)); let s = ''; for (let i = 0; i < n; i++) s += alphabet[b[i] % alphabet.length]; return s; }
@@ -376,33 +391,37 @@ async function handle(request, env) {
       const no = await db.claim(k, open, 'read'); if (no) return fail(...WHY[no]);
       const pages = Math.min(40, +meta.pages || 0), over = await spend();
       if (over) return finish(open, (x) => { x.aiErr = over; });
-      let j = null, err = null;
-      /* Pass 1 reads the plans. Pass 2 sends the same pages back with the first answer and asks for an item-by-item check.
-         The pages and prompt are marked for caching, so the second pass reuses them instead of paying for them again. */
-      const first = [...(n ? [u8.subarray(nl + 1), ','] : []), JSON.stringify({ type: 'text', text: readPrompt(n ? manifest : [], text), cache_control: { type: 'ephemeral' } })];
-      try {
-        const a1 = await askClaude(env, first);
-        j = a1.v;
-        if (j && j.readable !== false) {
-          try {
-            const tail = ',{"role":"assistant","content":[' + JSON.stringify({ type: 'text', text: a1.text.trim() }) + ']},{"role":"user","content":[' + JSON.stringify({ type: 'text', text: VERIFY }) + ']}';
-            const a2 = await askClaude(env, first, tail);
-            if (a2.v && Array.isArray(a2.v.blocks) && sanitise(a2.v)) { j = a2.v; j.__reviewed = true; }
-          } catch (e) { console.log('review pass failed', e && e.code); }
+      return slow(async () => {
+        let j = null, err = null;
+        /* Pass 1 reads the plans. Pass 2 sends the same pages back with the first answer and asks for an item-by-item check.
+           The pages and prompt are marked for caching, so the second pass reuses them instead of paying for them again. */
+        const first = [...(n ? [u8.subarray(nl + 1), ','] : []), JSON.stringify({ type: 'text', text: readPrompt(n ? manifest : [], text), cache_control: { type: 'ephemeral' } })];
+        try {
+          const a1 = await askClaude(env, first);
+          j = a1.v;
+          if (j && j.readable !== false) {
+            try {
+              const tail = ',{"role":"assistant","content":[' + JSON.stringify({ type: 'text', text: a1.text.trim() }) + ']},{"role":"user","content":[' + JSON.stringify({ type: 'text', text: VERIFY }) + ']}';
+              const a2 = await askClaude(env, first, tail);
+              if (a2.v && Array.isArray(a2.v.blocks) && sanitise(a2.v)) { j = a2.v; j.__reviewed = true; }
+            } catch (e) { console.log('review pass failed', e && e.code); }
+          }
         }
-      }
-      catch (e) { if (!(e && e.code)) console.log('read failed', e && (e.stack || e.message || e)); err = ERR[e && e.code] || ERR.upstream; }
-      return finish(open, (x) => { x.pages = pages; x.images = n; x.aiErr = err; if (j) applyRead(x, j, pricing, false); });
+        catch (e) { if (!(e && e.code)) console.log('read failed', e && (e.stack || e.message || e)); err = ERR[e && e.code] || ERR.upstream; }
+        return finish(open, (x) => { x.pages = pages; x.images = n; x.aiErr = err; if (j) applyRead(x, j, pricing, false); });
+      });
     }
     if (step === '/revise') {
       if (o.status !== 'preview' || o.revUsed || !o.params) return fail(409, 'bad_step', 'A change can be asked for once, at the preview.');
       const note = str((await body()).note, 600); if (!note) return fail(400, 'no_note', 'Say what should change.');
       const no = await db.claim(k, ['preview'], 'revise'); if (no) return fail(...WHY[no]);
       const over = await spend();
-      let j = null, err = over;
-      if (!over) { try { j = (await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })])).v; } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
-      if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(over ? 429 : 502, 'read_failed', err); }
-      return finish(['preview'], (x) => { x.revNote = note; applyRead(x, j, pricing, true); });
+      return slow(async () => {
+        let j = null, err = over;
+        if (!over) { try { j = (await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })])).v; } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
+        if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(over ? 429 : 502, 'read_failed', err); }
+        return finish(['preview'], (x) => { x.revNote = note; applyRead(x, j, pricing, true); });
+      });
     }
     if (step === '/hold') {
       if (o.status !== 'preview' || !o.quote) return fail(409, 'bad_step', 'This order is not at the preview step.');
