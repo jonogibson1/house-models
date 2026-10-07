@@ -215,7 +215,8 @@ function parseReply(text) {
 /* parts are the pieces of the content array, as bytes or strings. Page images pass through as raw bytes and are never decoded here, which keeps CPU use tiny. */
 async function askClaude(env, parts, tail) {
   if (!env.ANTHROPIC_API_KEY) throw { code: 'config' };
-  const chunks = ['{"model":' + JSON.stringify(env.MODEL || 'claude-opus-5-5') + ',"max_tokens":24000,"messages":[{"role":"user","content":[', ...parts, ']}' + (tail || '') + ']}']
+  /* Streamed, because a long read sends nothing for minutes and the connection would otherwise be cut by a proxy idle timeout. */
+  const chunks = ['{"model":' + JSON.stringify(env.MODEL || 'claude-opus-5-5') + ',"max_tokens":24000,"stream":true,"messages":[{"role":"user","content":[', ...parts, ']}' + (tail || '') + ']}']
     .map((c) => (typeof c === 'string' ? enc.encode(c) : c));
   const body = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let at = 0; for (const c of chunks) { body.set(c, at); at += c.length; }
@@ -225,14 +226,33 @@ async function askClaude(env, parts, tail) {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01',
         ...(env.ANTHROPIC_WORKSPACE_ID ? { 'anthropic-workspace-id': env.ANTHROPIC_WORKSPACE_ID } : {}) }, body });
   } catch (e) { throw { code: 'upstream' }; }
-  const j = await r.json().catch(() => null);
+  const codeFor = (status) => (status === 401 || status === 403 ? 'config' : status === 429 || status === 529 ? 'busy' : status === 413 ? 'too_big' : 'upstream');
   if (!r.ok) {
+    const j = await r.json().catch(() => null);
     console.log('anthropic error', r.status, j && j.error && j.error.message);
-    throw { code: r.status === 401 || r.status === 403 ? 'config' : r.status === 429 || r.status === 529 ? 'busy' : r.status === 413 ? 'too_big' : 'upstream' };
+    throw { code: codeFor(r.status) };
   }
-  const text = ((j && j.content) || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  let text = '', buf = '', failed = null;
+  const handle = (line) => {
+    if (!line.startsWith('data:')) return;
+    let ev; try { ev = JSON.parse(line.slice(5)); } catch (e) { return; }
+    if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') text += ev.delta.text;
+    else if (ev.type === 'error') failed = ev.error || {};
+  };
+  try {
+    const reader = r.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, nl).trim()); buf = buf.slice(nl + 1); }
+    }
+    if (buf.trim()) handle(buf.trim());
+  } catch (e) { throw { code: 'upstream' }; }
+  if (failed) { console.log('anthropic stream error', failed.type, failed.message); throw { code: failed.type === 'overloaded_error' || failed.type === 'rate_limit_error' ? 'busy' : 'upstream' }; }
   const v = parseReply(text);
-  if (v === undefined) throw { code: 'bad_reply' };
+  if (v === undefined) { console.log('unparseable reply', text.slice(0, 300)); throw { code: 'bad_reply' }; }
   return { v, text };
 }
 /* The upload after its first line must be image blocks exactly as the page builds them, joined by commas.
