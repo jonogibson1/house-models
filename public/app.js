@@ -71,10 +71,22 @@ function opath(id, step){ return '/api/orders/'+id+(step||'')+'?k='+encodeURICom
 function orderLink(id,k){ return location.origin+'/?o='+id+'.'+k; }
 
 /* Models are built in the browser by kit.js (the print kit's rules, on the manifold geometry library). */
-var Kit = null, cache = {};
-function built(params){
-  var k = JSON.stringify(params);
-  if(!cache[k]){ var n=0; for(var x in cache) n++; if(n>12) cache={}; cache[k] = Kit.build(params); }
+var Kit = null, cache = {}, kits = {};
+/* An accepted order is frozen to the builder version it was accepted with (o.kit), so later changes to the builder never change it. */
+function loadKit(v){
+  if(!v || (Kit && v===Kit.VERSION)) return Promise.resolve(Kit);
+  if(!kits[v]) kits[v]={ p: import('/kit/'+v+'.js').then(function(m){ return m.load('').then(function(){ m.setTextRaster(canvasRuns); kits[v].mod=m; return m; }); }) };
+  return kits[v].p;
+}
+function kitOf(o){
+  var v=o&&o.kit; if(!v || v===Kit.VERSION) return Kit;
+  if(kits[v] && kits[v].mod) return kits[v].mod;
+  loadKit(v).then(function(){ if(current==='order') renderOrder(); else if(current==='queue') renderQueue(); }, function(){});
+  return Kit;
+}
+function built(params, res, o){
+  var K=kitOf(o), k = (K.VERSION||'')+JSON.stringify(params);
+  if(!cache[k]){ var n=0; for(var x in cache) n++; if(n>12) cache={}; cache[k] = K.build(params); }
   return cache[k];
 }
 /* Letters for the plinth: drawn on a canvas in a bold sans face and read back as filled pixel runs. */
@@ -447,7 +459,7 @@ function renderOrder(){
     var rg=$('#read-go'); if(rg) rg.addEventListener('click',function(){ readNow(o.id); });
     return;
   }
-  var r=built(modelFor(o),0.8), q=o.quote, sh=shipOf(o,o.choice);
+  var r=built(modelFor(o),0.8,o), q=o.quote, sh=shipOf(o,o.choice);
   if(o.status==='preview' && ui.pay){
     var t=totalsOf(o,o.choice,o.delivery);
     h=head+'<div class="split" style="margin-top:22px"><div class="stack"><span class="eyebrow">Step 3 of 4</span><h3>Card hold</h3>'
@@ -520,19 +532,19 @@ function renderOrder(){
 /* ---------- print files ---------- */
 function saveZip(o){
   toast('Building the print file...');
-  setTimeout(function(){
-    var tree=o.choice==='tree', r=built(tree?treeOf(o.params):titled(o.params,o)), enc=new TextEncoder(), files=[];
+  loadKit(o.kit).then(function(){ setTimeout(function(){
+    var tree=o.choice==='tree', r=built(tree?treeOf(o.params):titled(o.params,o),1,o), enc=new TextEncoder(), files=[];
     files.push({name:(tree?'tree-model-':'house-model-')+o.id+'-1-'+r.scale+'.stl',data:G.stl(r.parts[0].tris)});
     var L='\r\n', notes=(tree?'Christmas tree version ':'House model ')+o.id+L+o.addr+L+'Scale 1:'+r.scale+L+'Size '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm'+L+L
       +'One piece, one filament: white PLA (matte) or white PETG.'+L
       +'Bambu Studio: start from 0.20mm Standard @BBL H2S. Supports OFF. Ironing: Top surfaces for the best finish (adds 40 to 50 percent to the time), or Topmost surface to save hours.'+L
       +'Walls 2, top 5, bottom 3, infill 15 percent grid, elephant foot compensation 0.15 mm.'+L+L
       +(tree?'Thread a ribbon down through the hole and knot it underneath.'+L+L:'')
-      +'Estimated filament: '+Math.ceil(r.grams)+' g. Rough figure; the slicer has the real one.'+L;
+      +'Estimated filament: '+Math.ceil(r.grams)+' g. Rough figure; the slicer has the real one.'+L+(o.kit?'Model frozen to builder version '+o.kit+' when the order was accepted.'+L:'');
     files.push({name:'README.txt',data:enc.encode(notes)});
     var url=URL.createObjectURL(new Blob([G.zip(files)],{type:'application/zip'})), a=document.createElement('a');
     a.href=url; a.download=(tree?'tree-model-':'house-model-')+o.id+'.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },4000);
-  },60);
+  },60); }, function(){ toast('The model builder for this order could not be loaded. Try again.'); });
 }
 
 /* ---------- owner queue ---------- */
@@ -570,7 +582,7 @@ function loadQueue(quiet){
   var gen=admin.gen;                                // a reply that lands after the queue was locked or re-opened is dropped
   return api('GET','/api/admin/orders').then(function(r){
     if(gen!==admin.gen) return;
-    admin.ok=true; admin.err=''; admin.orders=r.orders; cfg.pricing=r.pricing; try{ sessionStorage.setItem('fhm-owner',admin.key); }catch(e){}
+    admin.ok=true; admin.err=''; admin.orders=r.orders; cfg.pricing=r.pricing; admin.alerts=r.alerts||null; try{ sessionStorage.setItem('fhm-owner',admin.key); }catch(e){}
     if(!ui.edit || !quiet) renderQueue();
   }, function(e){
     if(gen!==admin.gen) return;
@@ -612,7 +624,8 @@ function renderQueue(){
     +'<div class="field"><label for="set-tree">Christmas tree version A$</label><input type="number" id="set-tree" value="'+(p.tree!=null?p.tree:60)+'"></div>'
     +'<div class="row"><button type="button" class="btn sm" id="set-save">Save prices</button></div>'
     +'<p class="muted small">New prices apply to previews made from now on. Postage uses Australia Post Parcel Post rates for own packaging as at 1 July 2026: '+POST.map(function(b){ return 'up to '+(b[0]<1?b[0]*1000+' g':b[0]+' kg')+' '+money2(b[1]); }).join(', ')+'. Box is the model plus 20 mm padding each side, plus 150 g of packaging, charged on the greater of actual and cubic weight.</p>'
-    +'</div></details>';
+    +'</div></details>'
+    +alertsBox();
   var d='';
   if(!o) d='<p class="muted">Nothing selected.</p>';
   else {
@@ -641,7 +654,7 @@ function renderQueue(){
          :'<div class="note quiet">The plans are being read. This starts by itself when the customer uploads.</div>')
        +aiBlock(o)+stepIn+ed+'</div>';
     } else if(o.params){
-      d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8).flags)+estTable(o.quote));
+      d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8,o).flags)+estTable(o.quote));
       if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn;
       if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+24*3600e3)+' or the hold lapses.'+(o.emailed?' Order email to you: '+esc(o.emailed)+'.':'')+(o.texted?' Text to you: '+esc(o.texted)+'.':'')+'</div>'
         +'<div class="row"><button type="button" class="btn" id="q-accept">Accept and charge '+money2(o.total)+'</button></div>'
@@ -671,9 +684,31 @@ function renderQueue(){
   var a=$('#q-accept'); if(a) a.addEventListener('click',function(){ act(o,{action:'accept'}, o.choice==='stl'?'Charged (test). Files released to the customer.':'Charged (test). Job accepted.'); });
   var dc=$('#q-decline'); if(dc) dc.addEventListener('click',function(){ act(o,{action:'decline',reason:$('#q-reason').value},'Declined. Hold released (test).'); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
+  bindAlerts();
   $('#set-save').addEventListener('click',function(){
     api('PUT','/api/admin/pricing',{min:$('#set-min').value,fee:$('#set-fee').value,perGram:$('#set-g').value,stl:$('#set-stl').value,tree:$('#set-tree').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
   });
+}
+
+/* ---------- owner alerts: phone push (ntfy, no account) and email (Resend key pasted by the owner) ---------- */
+function alertsBox(){
+  var a=admin.alerts||{}, sub=a.topic&&a.topic.indexOf('(')<0?'https://ntfy.sh/'+a.topic:'';
+  return '<details style="margin-top:12px"'+(admin.alertsOpen?' open':'')+' id="al-box"><summary>Order alerts</summary><div class="stack tight" style="margin-top:10px">'
+    +'<p class="small"><b>Phone:</b> '+(a.push?'on':'off')+(a.sms?'. SMS: on':'')+'. <b>Email:</b> '+(a.email?'on, to '+esc(a.emailTo):'off')+'.</p>'
+    +(a.push?(sub?'<p class="muted small">On your phone: install the free <b>ntfy</b> app, tap +, and subscribe to this topic. Keep it private.</p>'+copyBox('al-topic','Topic',a.topic)+'<p class="small"><a href="'+esc(sub)+'" target="_blank" rel="noopener">Open the topic in a browser</a></p>':'<p class="muted small">Phone alerts are set on the server.</p>')
+      :'<div class="row"><button type="button" class="btn sm" id="al-push">Turn on phone alerts</button></div><p class="muted small">Free, no account. Uses the ntfy app on your phone.</p>')
+    +'<div class="field"><label for="al-key">Resend API key, for order emails</label><input type="password" id="al-key" autocomplete="off" placeholder="'+(a.email?'Saved. Paste a new one to replace it.':'re_...')+'"></div>'
+    +'<div class="row"><button type="button" class="btn sm" id="al-save">Save key and send a test email</button><button type="button" class="btn ghost sm" id="al-test">Send a test alert</button></div>'
+    +'<p class="muted small">Make the key at resend.com after signing up with '+esc(a.emailTo||'jonathan@binbypass.com')+'. Each new order alerts you; you get a reminder when 3 hours are left, and a note if it lapses.</p>'
+    +'<p class="muted small" id="al-out" role="status"></p></div></details>';
+}
+function bindAlerts(){
+  var box=$('#al-box'); if(!box) return;
+  box.addEventListener('toggle',function(){ admin.alertsOpen=box.open; });
+  function send(body,msg){ api('POST','/api/admin/alerts',body).then(function(r){ admin.alerts=r.alerts; admin.alertsOpen=true; renderQueue(); var t=r.test, out=$('#al-out'); if(out) out.textContent=(msg||'Saved.')+(t?' Phone: '+t.text+'. Email: '+t.email+'.':''); }, function(e){ toast(e.message); }); }
+  var p=$('#al-push'); if(p) p.addEventListener('click',function(){ send({action:'push-on'},'Phone alerts on. A test alert was sent.'); });
+  $('#al-save').addEventListener('click',function(){ var k=$('#al-key').value.trim(); if(!k){ toast('Paste the key first.'); return; } send({action:'email-key',key:k},'Key saved. A test email was sent.'); });
+  $('#al-test').addEventListener('click',function(){ send({action:'test'},'Test sent.'); });
 }
 
 /* ---------- start ---------- */

@@ -32,7 +32,7 @@ Settings in `wrangler.jsonc`:
 |---|---|---|
 | `MODEL` | `claude-opus-5-5` | Model that reads the plans. |
 
-Order alerts. Each new order is held for 24 hours; if it is not accepted in that time the hold lapses and nothing is charged. When an order comes in the owner is told by any of these that are set up (as secrets on the Worker, Settings, Variables and Secrets). The order never waits on them, and the owner queue shows whether each was sent.
+Order alerts. The easy way: sign in to the owner queue, open Order alerts, tap Turn on phone alerts (free ntfy app, no account) and paste a Resend API key for email. The secrets below do the same from the Cloudflare side and win over the queue settings. Each new order is held for 24 hours; if it is not accepted in that time the hold lapses and nothing is charged. When an order comes in the owner is told by any of these that are set up (as secrets on the Worker, Settings, Variables and Secrets). The order never waits on them, and the owner queue shows whether each was sent.
 
 | Secret | Meaning |
 |---|---|
@@ -81,3 +81,11 @@ extras, 45 degree soffits on recesses and eaves, fences at least 1.6 mm, no tree
 address, scale and north point. Booleans run in [manifold-3d](https://github.com/elalish/manifold) (Apache 2.0,
 `public/vendor/manifold.js`, `public/vendor/manifold.wasm`). `public/gen.js` remains for the server's price estimate
 and for writing STL and zip files.
+
+## Accepted orders are frozen
+
+When an order is accepted it records the model builder version (`KIT_VERSION` in `src/worker.js`). Its preview and print file are built with `public/kit/<version>.js`, so later changes to the builder never change an order the customer already approved. Whenever `public/kit.js` changes: bump `VERSION` in it and `KIT_VERSION` in the worker to the same new value, and save a copy as `public/kit/<new version>.js`.
+
+## Retention
+
+An hourly job lapses holds not accepted within 24 hours (with a reminder 3 hours before), and removes the customer's name, email and file names 12 months after an order is finished, or 12 months after an upload that never became an order. The model and house address stay, so it can be reprinted. PDF plans are never stored.

@@ -6,13 +6,27 @@ import '../public/gen.js';
 
 const G = globalThis.HouseGen;
 const DEFAULT_PRICING = { min: 300, fee: 300, perGram: 0, stl: 30, tree: 60 };   // printed model: one price, A$300
-const REVIEW_MS = 24 * 3600e3;   // the owner has 24 hours to accept an order before the hold lapses
+const REVIEW_MS = 24 * 3600e3;
+/* The model builder version an accepted order is frozen to. public/kit/<KIT_VERSION>.js must be a copy of public/kit.js;
+   when kit.js changes, bump this and add the new copy, so accepted orders keep printing exactly what the customer approved. */
+const KIT_VERSION = '2026-10-07';
+const KEEP_MS = 365 * 24 * 3600e3;   // contact details are removed 12 months after an order is finished or left
+const FINAL = ['collected', 'delivered', 'declined', 'lapsed'];
+const finished = (o) => FINAL.includes(o.status) || (o.status === 'ready' && o.delivery === 'post');
+/* Remove the customer's name, email and file names a year on. The model and its house address stay, so it can be reprinted. */
+const scrub = (o) => {
+  if (o.scrubbed) return false;
+  const since = finished(o) ? (o.doneAt || o.decidedAt || o.created) : ['received', 'unreadable', 'preview', 'revision'].includes(o.status) ? o.created : 0;
+  if (!since || Date.now() - since < KEEP_MS) return false;
+  o.name = 'Removed after 12 months'; o.email = ''; o.ip = ''; o.files = []; o.revNote = o.revNote ? '(removed)' : ''; o.scrubbed = Date.now();
+  return true;
+};   // the owner has 24 hours to accept an order before the hold lapses
 /* A hold not accepted within 24 hours lapses: the card hold is released and nothing is charged. */
-const lapse = (o) => { if (o && o.status === 'hold_placed' && Date.now() - (o.holdAt || 0) > REVIEW_MS) { o.status = 'lapsed'; o.decidedAt = o.holdAt + REVIEW_MS; return true; } return false; };
+const lapse = (o) => { if (o && o.status === 'hold_placed' && Date.now() - (o.holdAt || 0) > REVIEW_MS) { o.status = 'lapsed'; o.decidedAt = o.doneAt = o.holdAt + REVIEW_MS; return true; } return false; };
 /* Text the owner. A real SMS through Twilio when TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM and NOTIFY_PHONE are set,
    and a phone push through ntfy when NTFY_TOPIC is set. Either, both or neither; an order never waits on them. */
-async function textOwner(env, msg) {
-  const out = [];
+async function textOwner(env, msg, al) {
+  const out = [], topic = env.NTFY_TOPIC || (al && al.ntfy);
   if (env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM && env.NOTIFY_PHONE) {
     try {
       const r = await fetch((env.TWILIO_BASE_URL || 'https://api.twilio.com') + '/2010-04-01/Accounts/' + env.TWILIO_SID + '/Messages.json', { method: 'POST',
@@ -21,20 +35,25 @@ async function textOwner(env, msg) {
       out.push('SMS ' + (r.ok ? 'sent' : 'failed ' + r.status));
     } catch (e) { out.push('SMS failed'); }
   }
-  if (env.NTFY_TOPIC) {
+  if (topic) {
     try {
-      const r = await fetch((env.NTFY_BASE_URL || 'https://ntfy.sh') + '/' + encodeURIComponent(env.NTFY_TOPIC), { method: 'POST', headers: { title: 'New house model order', priority: 'high' }, body: msg });
+      const r = await fetch((env.NTFY_BASE_URL || 'https://ntfy.sh') + '/' + encodeURIComponent(topic), { method: 'POST', headers: { title: 'House models', priority: 'high' }, body: msg });
       out.push('push ' + (r.ok ? 'sent' : 'failed ' + r.status));
     } catch (e) { out.push('push failed'); }
   }
   return out.length ? out.join(', ') : 'not set up';
 }
+const alertView = (env, al) => { al = al || {}; return {
+  push: !!(env.NTFY_TOPIC || al.ntfy), topic: env.NTFY_TOPIC ? '(set on the server)' : al.ntfy || null,
+  sms: !!(env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM && env.NOTIFY_PHONE),
+  email: !!(env.RESEND_API_KEY || al.resendKey), emailTo: env.NOTIFY_EMAIL || al.email || 'jonathan@binbypass.com' }; };
 /* Email the owner. Sends through Resend when RESEND_API_KEY is set; without it nothing is sent and the order still goes through. */
-async function emailOwner(env, subject, text) {
-  if (!env.RESEND_API_KEY) return 'not set up';
+async function emailOwner(env, subject, text, al) {
+  const key = env.RESEND_API_KEY || (al && al.resendKey);
+  if (!key) return 'not set up';
   try {
-    const r = await fetch((env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', { method: 'POST', headers: { authorization: 'Bearer ' + env.RESEND_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: env.EMAIL_FROM || 'House Models <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || 'jonathan@binbypass.com'], subject, text }) });
+    const r = await fetch((env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
+      body: JSON.stringify({ from: env.EMAIL_FROM || 'House Models <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com'], subject, text }) });
     return r.ok ? 'sent' : 'failed ' + r.status;
   } catch (e) { return 'failed'; }
 }
@@ -183,7 +202,7 @@ function totals(o) {
   const ship = o.choice === 'stl' || o.delivery !== 'post' ? 0 : tree ? o.quote.tree.ship.cost : o.quote.ship.cost;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
-const publicView = (o) => { const { key, ip, busy, reads, emailed, texted, ...rest } = o; return rest; };
+const publicView = (o) => { const { key, ip, busy, reads, emailed, texted, reminded, ...rest } = o; return rest; };
 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
@@ -360,8 +379,24 @@ async function handle(request, env) {
     if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) { await db.bump(tries, PASSCODE_TRIES); return fail(401, 'unauthorised', 'Wrong passcode.'); }
     if (path === '/api/admin/orders' && m === 'GET') {
       const orders = await db.scan('o:');
-      for (const o of orders) if (lapse(o)) await db.save('o:' + o.id, o);
-      return json({ orders, pricing });
+      for (const o of orders) { const a = lapse(o), b = scrub(o); if (a || b) await db.save('o:' + o.id, o); }
+      return json({ orders, pricing, alerts: alertView(env, await db.load('alerts')) });
+    }
+    if (path === '/api/admin/alerts' && m === 'POST') {
+      const b = await body(), al = (await db.load('alerts')) || {};
+      if (b.action === 'push-on') al.ntfy = al.ntfy || 'fhm-' + rid(28, 'abcdefghijklmnopqrstuvwxyz0123456789');
+      else if (b.action === 'push-off') al.ntfy = null;
+      else if (b.action === 'email-key') { const k2 = str(b.key, 200); if (!/^re_[A-Za-z0-9_]{10,}$/.test(k2)) return fail(400, 'bad_key', 'That does not look like a Resend API key. It starts with re_.'); al.resendKey = k2; }
+      else if (b.action === 'email-off') al.resendKey = null;
+      else if (b.action === 'email-to') { const e2 = str(b.email, 120); if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e2)) return fail(400, 'bad_email', 'That email address is not right.'); al.email = e2; }
+      else if (b.action !== 'test') return fail(400, 'bad_action', 'Unknown action.');
+      await db.save('alerts', al);
+      let test = null;
+      if (b.action === 'test' || b.action === 'push-on' || b.action === 'email-key') {
+        test = { text: await textOwner(env, 'Test alert from your house models site. New orders will arrive like this.', al),
+          email: await emailOwner(env, 'Test: house model order alerts', 'This is a test. New orders will be emailed here, with the order details and the 24 hour deadline.', al) };
+      }
+      return json({ alerts: alertView(env, al), test });
     }
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
@@ -373,7 +408,7 @@ async function handle(request, env) {
       const o = await db.load('o:' + am[1]); if (!o) return fail(404, 'not_found', 'No such order.');
       if (lapse(o)) await db.save('o:' + o.id, o);
       const b = await body(), act = b.action;
-      if (act === 'accept' && o.status === 'hold_placed') { o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); }
+      if (act === 'accept' && o.status === 'hold_placed') { o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); o.kit = KIT_VERSION; }
       else if (act === 'decline' && o.status === 'hold_placed') { o.status = 'declined'; o.declineReason = str(b.reason, 200); o.decidedAt = Date.now(); }
       else if (act === 'printing' && o.status === 'accepted') o.status = 'printing';
       else if (act === 'ready' && o.status === 'printing') o.status = 'ready';
@@ -384,6 +419,7 @@ async function handle(request, env) {
         const q = quoteFor(params, pricing); if (!q.fits) return fail(400, 'too_big', 'That model does not fit the printer at this scale.');
         o.params = params; o.quote = q; o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.aiErr = null; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup';
       } else return fail(409, 'bad_step', 'That step does not apply to this order right now.');
+      if (finished(o) && !o.doneAt) o.doneAt = Date.now();
       await db.save('o:' + o.id, o); return json({ order: o });
     }
     return fail(404, 'not_found', 'Not found.');
@@ -472,7 +508,8 @@ async function handle(request, env) {
       await db.save(k, o);
       const what = { print: 'Printed model', tree: 'Christmas tree version', stl: 'Print files only' }[o.choice] || o.choice;
       const by = new Date(o.holdAt + REVIEW_MS).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-      const site = url.origin;
+      const site = url.origin; await db.save('site', site);
+      const al = await db.load('alerts');
       o.emailed = await emailOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2),
         'New order to review.\n\n'
         + 'Order: ' + o.id + '\nName: ' + o.name + '\nEmail: ' + o.email + '\nHouse: ' + o.addr + (o.suburb ? ', ' + o.suburb : '') + '\n'
@@ -481,8 +518,8 @@ async function handle(request, env) {
         + (o.quote ? 'Model: 1:' + o.quote.scale + ', ' + o.quote.size.join(' x ') + ' mm, about ' + o.quote.grams + ' g, about ' + o.quote.hours + ' h to print\n' : '')
         + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
         + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
-        + 'Review it: ' + site + '/#queue (Owner sign-in)\n');
-      o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue');
+        + 'Review it: ' + site + '/#queue (Owner sign-in)\n', al);
+      o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
       await db.save(k, o);
       return json({ order: publicView(o) });
     }
@@ -490,7 +527,22 @@ async function handle(request, env) {
   return fail(404, 'not_found', 'Not found.');
 }
 
+/* Hourly: lapse holds past 24 hours, remind the owner when 3 hours are left, and remove contact details after 12 months. */
+async function sweep(env) {
+  const db = store(env), al = await db.load('alerts'), site = (await db.load('site')) || '';
+  for (const o of await db.scan('o:')) {
+    let changed = false;
+    if (o.status === 'hold_placed' && !o.reminded && Date.now() - o.holdAt > REVIEW_MS - 3 * 3600e3 && Date.now() - o.holdAt <= REVIEW_MS) {
+      o.reminded = await textOwner(env, 'Reminder: order ' + o.id + ' (' + o.name + ') lapses in under 3 hours unless you accept or decline it. ' + site + '/#queue', al); changed = true;
+    }
+    if (lapse(o)) { await textOwner(env, 'Order ' + o.id + ' (' + o.name + ') lapsed: not accepted within 24 hours. The hold is released and nothing is charged.', al); changed = true; }
+    if (scrub(o)) changed = true;
+    if (changed) await db.save('o:' + o.id, o);
+  }
+}
+
 export default {
+  async scheduled(event, env, ctx) { ctx.waitUntil(sweep(env)); },
   async fetch(request, env) {
     const url = new URL(request.url);
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);

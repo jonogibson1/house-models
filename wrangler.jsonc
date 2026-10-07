@@ -8,5 +8,6 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
   "vars": { "MODEL": "claude-opus-5-5", "ANTHROPIC_WORKSPACE_ID": "wrkspc_019vRTojKtpszYuMUTgxqr7y" },
   "keep_vars": true,
+  "triggers": { "crons": ["7 * * * *"] },
   "observability": { "enabled": true }
 }
