@@ -34,7 +34,7 @@ var SAMPLE = { scale:'auto', title:'Sample home, Ferny Hills', north:-24, blocks
   site:{w:32,d:10.5,houseX:9.01,houseY:1.6,north:-24,cover:'turf',items:[
    {kind:'driveway',x:27.96,y:5.4,w:4.04,d:5.1},{kind:'concrete',x:6.16,y:4.8,w:2.85,d:2.7},{kind:'path',x:27.96,y:4.0,w:4.04,d:1.4},
    {kind:'garden',x:29.5,y:0,w:2.5,d:5.4},{kind:'pebbles',x:0,y:0,w:9.0,d:0.6},
-   {kind:'tree',x:30.7,y:1.4,r:0.8,h:2.4},{kind:'tree',x:30.7,y:4.0,r:0.8,h:2.4},{kind:'shrub',x:29.9,y:2.7,r:0.35,h:0.5},
+   
    {kind:'fence',x1:0,y1:0,x2:0,y2:10.5,h:1.8},{kind:'fence',x1:0,y1:0,x2:26.0,y2:0,h:1.8},{kind:'fence',x1:0,y1:10.5,x2:20,y2:10.5,h:1.8},{kind:'fence',x1:26,y1:0,x2:26,y2:1.6,h:1.8},
    {kind:'box',name:'air conditioner',x:13,y:9.6,w:0.9,d:0.35,h:0.7},{kind:'box',name:'air conditioner',x:16.5,y:0.9,w:0.9,d:0.35,h:0.7},
    {kind:'box',name:'letterbox',x:31.4,y:4.0,w:0.4,d:0.4,h:1.1},{kind:'box',name:'hot water system',x:8.5,y:2.0,w:0.5,d:0.5,h:1.6}]} };
@@ -70,11 +70,22 @@ function api(method, path, body, raw){
 function opath(id, step){ return '/api/orders/'+id+(step||'')+'?k='+encodeURIComponent(keyOf(id)); }
 function orderLink(id,k){ return location.origin+'/?o='+id+'.'+k; }
 
-var cache = {};
-function built(params, res){
-  var k = res + JSON.stringify(params);
-  if(!cache[k]){ var n=0; for(var x in cache) n++; if(n>12) cache={}; cache[k] = G.build(params, res); }
+/* Models are built in the browser by kit.js (the print kit's rules, on the manifold geometry library). */
+var Kit = null, cache = {};
+function built(params){
+  var k = JSON.stringify(params);
+  if(!cache[k]){ var n=0; for(var x in cache) n++; if(n>12) cache={}; cache[k] = Kit.build(params); }
   return cache[k];
+}
+/* Letters for the plinth: drawn on a canvas in a bold sans face and read back as filled pixel runs. */
+function canvasRuns(text){
+  var c=document.createElement('canvas'), g=c.getContext('2d'), px=96, font='700 '+px+'px "Helvetica Neue", Helvetica, Arial, sans-serif';
+  g.font=font; var mt=g.measureText(text), cap=g.measureText('H').actualBoundingBoxAscent||px*0.72;
+  var w=Math.ceil(mt.width)+4, asc=Math.ceil(mt.actualBoundingBoxAscent||cap), desc=Math.ceil(mt.actualBoundingBoxDescent||0), h=asc+desc+4;
+  c.width=w; c.height=h; g.font=font; g.fillStyle='#000'; g.textBaseline='alphabetic'; g.fillText(text,2,asc+2);
+  var d=g.getImageData(0,0,w,h).data, rows=[];
+  for(var y=0;y<h;y++){ var runs=[], st=-1; for(var x=0;x<=w;x++){ var on=x<w && d[(y*w+x)*4+3]>110; if(on&&st<0) st=x; if(!on&&st>=0){ runs.push([st,x]); st=-1; } } rows.push(runs); }
+  return { rows:rows, w:w, h:h, cap:cap };
 }
 /* Used for the sample on the home page and the owner's live editor. Orders themselves carry the server's quote. */
 var POST = [[0.25,10.20],[0.5,11.70],[1,16.00],[3,20.25],[5,24.45]];
@@ -93,15 +104,15 @@ function pill(o){ var s=STATUS[o.status]||['?','']; var t=s[0]; if(o.status==='r
 /* ---------- 3D viewer ---------- */
 function cssVar(n){ return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || '#888'; }
 function Viewer(spin){
-  this.az=-0.75; this.el=0.52; this.dist=300; this.explode=false; this.spin=!!spin; this.ok=false; this.holder=null; this.result=null;
+  this.az=-0.45; this.el=0.62; this.dist=300; this.explode=false; this.spin=!!spin; this.ok=false; this.holder=null; this.result=null;
   if(!window.THREE) return;
   try{
     this.r = new THREE.WebGLRenderer({antialias:true});
     this.r.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
     this.scene = new THREE.Scene();
     this.cam = new THREE.PerspectiveCamera(32,4/3,1,5000);
-    this.scene.add(new THREE.HemisphereLight(0xffffff,0x3a5248,0.5)); var d2=new THREE.DirectionalLight(0xffffff,0.25); d2.position.set(-200,120,-150); this.scene.add(d2);
-    var d=new THREE.DirectionalLight(0xffffff,0.85); d.position.set(220,160,60); this.scene.add(d);
+    this.scene.add(new THREE.HemisphereLight(0xffffff,0x404a46,0.42)); var d2=new THREE.DirectionalLight(0xffffff,0.25); d2.position.set(-200,120,-150); this.scene.add(d2);
+    var d=new THREE.DirectionalLight(0xffffff,0.95); d.position.set(260,180,120); this.scene.add(d);
     this.world = new THREE.Group(); this.world.rotation.x=-Math.PI/2; this.scene.add(this.world);
     this.model = new THREE.Group(); this.world.add(this.model);
     this.deco = new THREE.Group(); this.world.add(this.deco);
@@ -122,10 +133,6 @@ Viewer.prototype.mount=function(holder, opts){
   if(!this.ok){ var n=document.createElement('div'); n.className='nogl'; n.textContent='The 3D preview needs WebGL, which this browser has switched off.'; holder.appendChild(n); return; }
   holder.appendChild(this.r.domElement);
   if(opts.watermark){ var w=document.createElement('div'); w.className='wm'; w.setAttribute('aria-hidden','true'); holder.appendChild(w); }
-  var self=this, tools=document.createElement('div'); tools.className='tools';
-  var b=document.createElement('button'); b.type='button'; b.textContent='Lift roof'; b.setAttribute('aria-pressed',String(this.explode));
-  b.addEventListener('click',function(){ self.explode=!self.explode; b.setAttribute('aria-pressed',String(self.explode)); self.place(); self.draw(); });
-  tools.appendChild(b); holder.appendChild(tools);
   if(this.ro){ this.ro.disconnect(); this.ro.observe(holder); }
   this.size();
 };
@@ -150,7 +157,7 @@ Viewer.prototype.set=function(result){
   cyl(R-4,R,4,CH-9,0xc9ccd1,true); cyl(R-5,R-4,5,CH-5,0xc9ccd1,true);
   can.position.set(cx+R+22, -cy+R, 0); this.deco.add(can);
   var wide=result.size[0]+2*R+22;
-  this.dist=Math.max(200,Math.max(wide,result.size[1]*1.4,CH*1.5)*1.3); this.base=this.dist;
+  this.dist=Math.max(160,Math.max(wide,result.size[1]*1.4,CH*1.4)*1.2); this.base=this.dist;
   this.target=CH*0.3;
   this.model.position.x=-(2*R+22)/2; can.position.x+=-(2*R+22)/2;
   this.place(); this.draw();
@@ -167,12 +174,14 @@ var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherbo
   base:'#34383b', turf:'#5f7f45', garden:'#6b4f36', mulch:'#7a5a3a', pebbles:'#c3bdb2', concrete:'#bdbbb5', driveway:'#a8a6a0', path:'#d3cdc1', paving:'#c9bfae',
   deck:'#8b6a4a', pool:'#5aa8cf', gravel:'#bdb6a6', sand:'#e3d3a8', fence:'#9a7b5a', tree:'#3f6b3a', fixture:'#e6e2da' };
 /* The model prints in white only, so the preview shows it in white; detail reads from shading. */
-function partColour(p){ return '#e9e7e1'; }
+function partColour(p){ return '#e4e2dc'; }
 function viewer(name, spin){ if(!V[name]) V[name]=new Viewer(spin); return V[name]; }
 
 /* ---------- routing ---------- */
 var VIEWS=['home','start','order','queue'], current='home';
+var pendingGo=null;
 function go(v, noHash){
+  if(!Kit){ pendingGo=[v,noHash]; return; }   // the model library is still loading; go there once it is ready
   if(VIEWS.indexOf(v)<0) v='home';
   current=v;
   VIEWS.forEach(function(n){ $('#v-'+n).hidden = n!==v; });
@@ -211,7 +220,7 @@ function renderHome(){
   $('#about-pic').innerHTML=PIC_SVG;
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
   $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
-    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. Printed in white, with everything on the plans shown in relief: brick coursing, weatherboards, windows and doors, the tiled roof, the alfresco, driveway, garden, trees and fences. Drag to turn it.';
+    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. One white piece, like an architect\'s model: framed windows and doors, weatherboard lines, the alfresco on its posts, the driveway, garden beds and fences, and the address on the plinth. Drag to turn it.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -380,7 +389,7 @@ function detailRows(o){
   if(d.site){
     h+='<dt>Lot</dt><dd>'+(+d.site.w).toFixed(1)+' x '+(+d.site.d).toFixed(1)+' m</dd>';
     var land=[d.site.cover].concat(d.site.surf).filter(function(v,i,a){ return v && a.indexOf(v)===i; }).join(', ');
-    var more=[d.site.fences?plural(d.site.fences,'fence'):'', d.site.walls?plural(d.site.walls,'retaining wall'):'', d.site.trees?plural(d.site.trees,'tree')+' and shrubs':'', d.site.boxes.length?d.site.boxes.join(', '):''].filter(Boolean).join(', ');
+    var more=[d.site.fences?plural(d.site.fences,'fence'):'', d.site.walls?plural(d.site.walls,'retaining wall'):'',  d.site.boxes.length?d.site.boxes.join(', '):''].filter(Boolean).join(', ');
     h+='<dt>Landscaping</dt><dd>'+esc(land+(more?'; '+more:''))+'</dd>';
   }
   return h;
@@ -500,24 +509,16 @@ function renderOrder(){
 
 /* ---------- print files ---------- */
 function saveZip(o){
-  toast('Building print files at full detail...');
+  toast('Building the print file...');
   setTimeout(function(){
-    var tree=o.choice==='tree', r=G.build(tree?treeOf(o.params):titled(o.params,o),0.5), enc=new TextEncoder(), files=[], k;
-    var p1=r.parts.filter(function(p){ return p.kind!=='roof'; }), roofs=r.parts.filter(function(p){ return p.kind==='roof'; });
-    var org=[Infinity,Infinity,Infinity];
-    p1.forEach(function(p){ for(k=0;k<3;k++) org[k]=Math.min(org[k], p.st.min[k]+(k===2?p.z0:0)); });
-    var n1=p1.reduce(function(a,p){ return a+p.tris.length; },0), all=new Float32Array(n1), at=0;
-    p1.forEach(function(p){ var t=p.tris; all.set(t,at); if(p.z0) for(k=at+2;k<at+t.length;k+=3) all[k]+=p.z0; at+=t.length; });
-    files.push({name:'plate-1-model.stl',data:G.stl(all,org)});
-    roofs.forEach(function(p,i){ files.push({name:'plate-'+(2+i)+'-'+p.name+'.stl',data:G.stl(p.tris)}); });
-    var L='\r\n', notes=(tree?'Christmas tree version ':'House model ')+o.id+L+o.addr+L+'Scale 1:'+r.scale+L+'Size '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm assembled'+L+L
-      +'All parts print flat side down with supports OFF. 0.2 mm layers, 2 walls, 10 to 15 percent infill.'+L+L
-      +'Everything prints in white. One filament, no colour changes.'+L+L
-      +'PLATE 1: plate-1-model.stl. The base, plinth lettering, walls, fences, trees and fixtures as one file, already assembled.'+L+L
-      +'PLATE '+(roofs.length>1?'2 onwards':'2')+', the roof'+(roofs.length>1?'s, one per storey level':'')+L
-      +'White, flat underside down. It drops onto the tapered pegs on top of the walls.'+L
-      +(tree?'Thread a ribbon down through the hole in the roof and the walls, knot it under the walls, and add a dab of glue between roof and walls.'+L:'')+L
-      +'Estimated filament: '+Math.ceil(r.grams)+' g. Estimated print time: '+r.hours.toFixed(1)+' h. Both are rough figures; the slicer has the real ones.'+L;
+    var tree=o.choice==='tree', r=built(tree?treeOf(o.params):titled(o.params,o)), enc=new TextEncoder(), files=[];
+    files.push({name:(tree?'tree-model-':'house-model-')+o.id+'-1-'+r.scale+'.stl',data:G.stl(r.parts[0].tris)});
+    var L='\r\n', notes=(tree?'Christmas tree version ':'House model ')+o.id+L+o.addr+L+'Scale 1:'+r.scale+L+'Size '+r.size.map(function(v){return v.toFixed(1);}).join(' x ')+' mm'+L+L
+      +'One piece, one filament: white PLA (matte) or white PETG.'+L
+      +'Bambu Studio: start from 0.20mm Standard @BBL H2S. Supports OFF. Ironing: Top surfaces for the best finish (adds 40 to 50 percent to the time), or Topmost surface to save hours.'+L
+      +'Walls 2, top 5, bottom 3, infill 15 percent grid, elephant foot compensation 0.15 mm.'+L+L
+      +(tree?'Thread a ribbon down through the hole and knot it underneath.'+L+L:'')
+      +'Estimated filament: '+Math.ceil(r.grams)+' g. Rough figure; the slicer has the real one.'+L;
     files.push({name:'README.txt',data:enc.encode(notes)});
     var url=URL.createObjectURL(new Blob([G.zip(files)],{type:'application/zip'})), a=document.createElement('a');
     a.href=url; a.download=(tree?'tree-model-':'house-model-')+o.id+'.zip'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); },4000);
@@ -666,11 +667,12 @@ function renderQueue(){
 }
 
 /* ---------- start ---------- */
-api('GET','/api/config').then(function(c){ cfg=c; if(current==='home') renderHome(); var nr=$('#not-ready'); if(nr) nr.hidden=!!c.ready; }, function(){});
-(function(){
+api('GET','/api/config').then(function(c){ cfg=c; if(current==='home' && Kit) renderHome(); var nr=$('#not-ready'); if(nr) nr.hidden=!!c.ready; }, function(){});
+import('/kit.js').then(function(k){ return k.load('').then(function(){ Kit=k; Kit.setTextRaster(canvasRuns); }); }).then(function(){
   var m=/[?&]o=([A-Z0-9-]{4,12})\.([a-z0-9]{8,40})/.exec(location.search);
+  if(pendingGo){ var pg=pendingGo; pendingGo=null; go(pg[0],pg[1]); return; }
   if(m){ remember(m[1],m[2]); cur=null; go('order'); return; }
   var h=(location.hash||'').replace('#','');
   go(h||'home', true);
-})();
+}, function(){ document.querySelector('main').insertAdjacentHTML('afterbegin','<div class="note bad" style="margin-top:20px">The 3D model library did not load. Reload the page to try again.</div>'); });
 })();

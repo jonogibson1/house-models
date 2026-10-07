@@ -62,3 +62,12 @@ npm run dev
 ## Third-party code
 
 `public/vendor/three.min.js` (three.js r128, MIT licence) and `public/vendor/pdf.min.js`, `public/vendor/pdf.worker.min.js` (PDF.js 3.11.174, Apache 2.0 licence).
+
+## Model builder
+
+`public/kit.js` builds every model in the browser, following the rules of
+[arch-model-print-kit](https://github.com/jonogibson1/arch-model-print-kit): one white piece, solids minus voids plus
+extras, 45 degree soffits on recesses and eaves, fences at least 1.6 mm, no trees, an embossed plinth band with the
+address, scale and north point. Booleans run in [manifold-3d](https://github.com/elalish/manifold) (Apache 2.0,
+`public/vendor/manifold.js`, `public/vendor/manifold.wasm`). `public/gen.js` remains for the server's price estimate
+and for writing STL and zip files.

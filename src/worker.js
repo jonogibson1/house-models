@@ -109,7 +109,6 @@ function sanitise(j) {
         it = it || {}; const k = it.kind;
         if (SURFACES.includes(k)) return { kind: k, x: num(it.x, 0, -10, 210), y: num(it.y, 0, -10, 210), w: num(it.w, 1, 0.3, 200), d: num(it.d, 1, 0.3, 200) };
         if (k === 'fence' || k === 'retaining' || k === 'wall') return { kind: k, x1: num(it.x1, 0, -10, 210), y1: num(it.y1, 0, -10, 210), x2: num(it.x2, 0, -10, 210), y2: num(it.y2, 0, -10, 210), h: num(it.h, 1.8, 0.2, 4), t: num(it.t, 0.1, 0.05, 0.6) };
-        if (k === 'tree' || k === 'shrub') return { kind: k, x: num(it.x, 0, -10, 210), y: num(it.y, 0, -10, 210), r: num(it.r, k === 'tree' ? 1 : 0.4, 0.2, 6), h: num(it.h, k === 'tree' ? 3 : 0.6, 0.2, 15) };
         if (k === 'box') return { kind: k, name: str(it.name, 40), x: num(it.x, 0, -10, 210), y: num(it.y, 0, -10, 210), w: num(it.w, 0.5, 0.1, 10), d: num(it.d, 0.5, 0.1, 10), h: num(it.h, 1, 0.1, 4) };
         return null;
       }).filter(Boolean) };
@@ -161,7 +160,7 @@ const SHAPE = 'Reply with only one JSON object, no other text, in exactly this s
   + '   "openings": [{"side": "s", "at": 1.2, "w": 1.8, "sill": 0.9, "head": 2.1, "kind": "window", "storey": 1}, {"side": "e", "at": 0.6, "w": 4.8, "sill": 0, "head": 2.2, "kind": "garage", "storey": 1}]}],\n'
   + ' "north": 0, "site": {"w": 32, "d": 10.5, "houseX": 9.0, "houseY": 1.6, "north": 0, "cover": "turf", "items": [\n'
   + '   {"kind": "driveway", "x": 28, "y": 5.4, "w": 4, "d": 5}, {"kind": "garden", "x": 29.5, "y": 0, "w": 2.5, "d": 6},\n'
-  + '   {"kind": "fence", "x1": 0, "y1": 0, "x2": 0, "y2": 10.5, "h": 1.8, "t": 0.1}, {"kind": "tree", "x": 30.7, "y": 1.5, "r": 1, "h": 3},\n'
+  + '   {"kind": "fence", "x1": 0, "y1": 0, "x2": 0, "y2": 10.5, "h": 1.8, "t": 0.1},\n'
   + '   {"kind": "box", "name": "air conditioner", "x": 13, "y": 9.6, "w": 0.9, "d": 0.35, "h": 0.7}]},\n'
   + ' "checks": ["..."], "assumptions": ["..."], "problems": ["..."]}\n\n'
   + 'Field rules:\n'
@@ -179,9 +178,9 @@ const SHAPE = 'Reply with only one JSON object, no other text, in exactly this s
   + '- site, from the site plan and any landscape plan: w and d are the lot\'s east-west and north-south size (its bounding rectangle). houseX, houseY: metres from the lot\'s south-west corner to the house\'s south-west corner (the same corner blocks are measured from). cover: what most of the open ground is ("turf", "gravel", "mulch", "sand"). items, all in metres from the lot\'s south-west corner:\n'
   + '  - surfaces as rectangles x, y, w, d, kind one of "driveway", "path", "concrete", "paving", "deck", "pool", "garden", "mulch", "pebbles", "gravel", "turf", "sand";\n'
   + '  - "fence", "retaining" or "wall" as a straight line x1, y1, x2, y2 with height h and thickness t (a fence on top of a retaining wall: one fence with the combined height);\n'
-  + '  - "tree" or "shrub" at x, y with canopy radius r and height h;\n'
+  + '  - no trees, shrubs or lawn texture: the model leaves vegetation out;\n'
   + '  - "box" for solid fixtures: air conditioner, hot water system, letterbox, water tank, bin pad, clothesline post. name says what it is.\n'
-  + '  Include everything drawn on the site and landscape plans. Leave site out entirely (null) if there is no site plan.\n'
+  + '  Include every ground surface, fence, wall and fixture drawn on the site and landscape plans, and nothing that is not drawn. Leave site out entirely (null) if there is no site plan.\n'
   + '- checks: short notes of what you measured and cross-checked, for example "Overall length 18,950 from floor plan matches elevation B". At most 12.\n'
   + '- confidence: your honest estimate, 0 to 1, that the outline and roof form are right to within about half a metre. Below 0.5 means a person should check.\n'
   + '- assumptions: every value you guessed or defaulted, in plain words a home owner would understand, at most 10, each under 140 characters.\n'
