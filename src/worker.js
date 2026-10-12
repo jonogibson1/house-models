@@ -1,4 +1,4 @@
-/* House Models: one Cloudflare Worker.
+/* Small Build Co (smallbuild.com.au): one Cloudflare Worker.
    Serves the site from ./public, stores orders in a Durable Object, and reads plans through the Anthropic API.
    Secrets (set at deploy): ANTHROPIC_API_KEY, ADMIN_PASSCODE. */
 import { DurableObject } from 'cloudflare:workers';
@@ -53,7 +53,7 @@ async function emailOwner(env, subject, text, al) {
   if (!key) return 'not set up';
   try {
     const r = await fetch((env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: env.EMAIL_FROM || 'House Models <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com'], subject, text }) });
+      body: JSON.stringify({ from: env.EMAIL_FROM || 'Small Build Co <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com'], subject, text }) });
     return r.ok ? 'sent' : 'failed ' + r.status;
   } catch (e) { return 'failed'; }
 }

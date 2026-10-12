@@ -188,9 +188,10 @@ var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherbo
 /* The model prints in white only, so the preview shows it in white; detail reads from shading. */
 function partColour(p){ return '#e4e2dc'; }
 function viewer(name, spin){ if(!V[name]) V[name]=new Viewer(spin); return V[name]; }
+window.viewer = viewer;   // used by gallery.js
 
 /* ---------- routing ---------- */
-var VIEWS=['home','start','order','queue'], current='home';
+var VIEWS=['home','models','start','order','queue'], current='home';
 var pendingGo=null;
 function go(v, noHash){
   if(!Kit){ pendingGo=[v,noHash]; return; }   // the model library is still loading; go there once it is ready
@@ -202,6 +203,7 @@ function go(v, noHash){
   if(v==='home') renderHome();
   if(v==='order') showOrder();
   if(v==='queue') showQueue();
+  if(v==='models' && window.showModels) window.showModels();
   window.scrollTo(0,0);
 }
 document.addEventListener('click',function(e){ var b=e.target.closest('[data-go]'); if(b){ e.preventDefault(); go(b.getAttribute('data-go')); } });
