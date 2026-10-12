@@ -249,7 +249,7 @@ function part(src,x,y,w,h,max){
 function loadImage(file){ return new Promise(function(res,rej){ var u=URL.createObjectURL(file), im=new Image(); im.onload=function(){ res(im); }; im.onerror=function(){ URL.revokeObjectURL(u); rej(); }; im.src=u; }); }
 async function prep(files, prog){
   var maxN=20, docs=[], total=0, i;
-  for(i=0;i<files.length;i++){ var buf=new Uint8Array(await files[i].arrayBuffer()); var doc=await window.pdfjsLib.getDocument({data:buf}).promise; docs.push(doc); total+=doc.numPages; }
+  for(i=0;i<files.length;i++){ var buf=new Uint8Array(await files[i].arrayBuffer()); var doc=await window.pdfjsLib.getDocument({data:buf, isEvalSupported:false}).promise; docs.push(doc); total+=doc.numPages; }
   /* Real plan sets run to 20 or more sheets. Rank each sheet by its words, keep the floor plan, elevations and roof plan
      at full detail, and drop electrical, detail and similar sheets that say nothing about the outside shape. */
   /* Sheet titles are set in big type, so the big words on each sheet decide what it is. */
@@ -500,12 +500,12 @@ function renderOrder(){
   if(o.status==='preview' && ui.pay){
     var t=totalsOf(o,o.choice,o.delivery), live=!!(cfg&&cfg.payments);
     h=head+'<div class="split" style="margin-top:22px"><div class="stack"><span class="eyebrow">Step 3 of 4</span><h3>Card hold</h3>'
-     +'<p class="muted">A hold of '+money2(t.total)+' is placed on your card now. Nothing is charged until Jono confirms your job, within 24 hours. If he can\'t take it on, or doesn\'t confirm in time, the hold is released.</p>'
-     +(live?'<div class="note quiet">You enter your card on Stripe\'s secure payment page, then come straight back here. Small Build Co never sees your card number.</div>'
+     +'<p class="muted">'+money2(t.total)+' is held on your card, not charged. I confirm within 24 hours and only then is it charged. If I can\'t take the job, or don\'t confirm in time, the hold is released.</p>'
+     +(live?'<div class="note quiet">You pay on Stripe\'s payment page, then come back here. I never see your card number.</div>'
      :'<div class="cardmock"><div class="note warn"><b>Test mode.</b> This is a pretend payment page. No card details are collected and nothing is charged. The test card is filled in for you.</div>'
      +'<div class="field"><label for="pay-num">Card number</label><input type="text" id="pay-num" class="mono" value="4242 4242 4242 4242" readonly></div>'
      +'<div class="grid2"><div class="field"><label for="pay-exp">Expiry</label><input type="text" id="pay-exp" class="mono" value="12 / 34" readonly></div><div class="field"><label for="pay-cvc">CVC</label><input type="text" id="pay-cvc" class="mono" value="123" readonly></div></div></div>')
-     +'<div class="row"><button class="btn" id="pay-go">'+(live?'Continue to secure payment':'Place hold of '+money2(t.total))+'</button><button class="btn ghost" id="pay-back">Back to preview</button></div></div>'
+     +'<div class="row"><button class="btn" id="pay-go">'+(live?'Go to payment':'Place hold of '+money2(t.total))+'</button><button class="btn ghost" id="pay-back">Back to preview</button></div></div>'
      +'<div class="card stack"><h3>Your order</h3><dl class="spec"><dt>Item</dt><dd>'+(o.choice==='stl'?'STL files':o.choice==='tree'?'Christmas tree version, 1:'+q.tree.scale:'Printed model, 1:'+q.scale)+'</dd><dt>House</dt><dd>'+esc(o.addr)+'</dd>'
      +'<dt>Handover</dt><dd>'+(o.choice==='stl'?'Download here':o.delivery==='post'?'Australia Post to '+esc(o.addr)+(o.suburb?', '+esc(o.suburb):''):'Pickup, Ferny Hills')+'</dd></dl>'
      +'<div class="totals"><span>'+itemName(o.choice)+'</span><span>'+money2(t.price)+'</span>'+(o.choice==='stl'?'':'<span>'+(o.delivery==='post'?'Postage, Parcel Post':'Pickup')+'</span><span>'+money2(t.ship)+'</span>')
@@ -514,7 +514,7 @@ function renderOrder(){
     $('#pay-back').addEventListener('click',function(){ ui.pay=false; renderOrder(); });
     $('#pay-go').addEventListener('click',function(){
       var b=this; b.disabled=true; ui.busy='hold';
-      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ if(res.pay){ location.href=res.pay; return; } cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. Jono has 24 hours to confirm.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
+      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ if(res.pay){ location.href=res.pay; return; } cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. I confirm within 24 hours.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
     });
     return;
   }
@@ -723,7 +723,7 @@ function renderQueue(){
     $('#ed-cancel').addEventListener('click',function(){ ui.edit=null; renderQueue(); });
   }
   var qd=$('#q-dl'); if(qd) qd.addEventListener('click',function(){ saveZip(o); });
-  var a=$('#q-accept'); if(a) a.addEventListener('click',function(){ act(o,{action:'accept'}, o.choice==='stl'?'Charged (test). Files released to the customer.':'Charged (test). Job accepted.'); });
+  var a=$('#q-accept'); if(a) a.addEventListener('click',function(){ act(o,{action:'accept'}, (o.choice==='stl'?'Charged. Files released to the customer.':'Charged. Job accepted.')); });
   var dc=$('#q-decline'); if(dc) dc.addEventListener('click',function(){ act(o,{action:'decline',reason:$('#q-reason').value},'Declined. Hold released (test).'); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
   bindAlerts();

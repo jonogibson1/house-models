@@ -99,6 +99,7 @@ async function syncPay(env, o) {
   const s = await stripe(env, 'GET', 'checkout/sessions/' + o.pay.session + '?expand[]=payment_intent');
   const pi = s.payment_intent;
   if (s.status === 'complete' && pi && pi.status === 'requires_capture') {
+    if (s.amount_total !== Math.round(o.total * 100)) { console.log('amount mismatch', o.id, s.amount_total, o.total); await stripe(env, 'POST', 'payment_intents/' + pi.id + '/cancel', {}).catch(() => {}); o.status = 'preview'; o.pay = null; return true; }
     o.pay.pi = pi.id; o.status = 'hold_placed'; o.holdAt = (pi.created ? pi.created * 1000 : Date.now()); return true;
   }
   if (s.status === 'expired') { o.status = 'preview'; o.pay = null; return true; }
@@ -124,7 +125,7 @@ async function notifyHold(env, db, o, site) {
     + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
     + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
     + 'Review it: ' + site + '/#queue (Owner sign-in)\n', al);
-  o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
+  o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
 }
 const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
@@ -132,18 +133,35 @@ const POST = [[0.25, 10.2], [0.5, 11.7], [1, 16.0], [3, 20.25], [5, 24.45]];
 const enc = new TextEncoder(), dec = new TextDecoder();
 const IMG_PREFIX = enc.encode('{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"');
 const MAX_IMAGES = 24;
-const MAX_UPLOAD = 26 * 1024 * 1024;
+const MAX_UPLOAD = 15 * 1024 * 1024;
 const MAX_META = 200000;
 const MAX_JSON = 300000;
 const BUSY_MS = 6 * 60 * 1000;
-const PASSCODE_TRIES = 40;
+const PASSCODE_TRIES = 20, ADMIN_DAY_CAP = 200, MAX_READS = 3;
 
 /* ---------- storage: one small strongly consistent store ---------- */
 export class Store extends DurableObject {
   async load(k) { return (await this.ctx.storage.get(k)) ?? null; }
-  async save(k, v) { await this.ctx.storage.put(k, v); }
-  /* Newest orders first. */
-  async scan(prefix) { const m = await this.ctx.storage.list({ prefix, limit: 3000 }); return [...m.values()].sort((a, b) => b.created - a.created).slice(0, 300); }
+  async save(k, v) { if (k.startsWith('o:') && v && typeof v === 'object') v.rev = ((await this.ctx.storage.get(k)) || {}).rev + 1 || 1; await this.ctx.storage.put(k, v); }
+  /* Every record under a prefix, newest first, paged so nothing is missed however many there are. */
+  async scanAll(prefix) {
+    const out = []; let after;
+    for (;;) { const m = await this.ctx.storage.list({ prefix, limit: 1000, ...(after ? { startAfter: after } : {}) }); for (const [k, v] of m) { out.push(v); after = k; } if (m.size < 1000) break; }
+    return out.sort((a, b) => b.created - a.created);
+  }
+  /* The owner queue: every order still in progress, plus the 300 newest. */
+  async scan(prefix) { const all = await this.scanAll(prefix); const live = all.filter((o) => !finished(o)); const seen = new Set(live.map((o) => o.id)); return [...live, ...all.filter((o) => !seen.has(o.id)).slice(0, 300)].sort((a, b) => b.created - a.created); }
+  /* Saves only if nobody else saved the order since it was read (rev matches). Returns false when it lost the race. */
+  async saveIf(k, v, rev) { const cur = await this.ctx.storage.get(k); if (cur && (cur.rev || 0) !== (rev || 0)) return false; v.rev = (rev || 0) + 1; await this.ctx.storage.put(k, v); return true; }
+  /* Deletes spent codes and passes, old counters, and leads older than a year. */
+  async purge() {
+    const now = Date.now(), cut = new Date(now - 2 * 864e5).toISOString().slice(0, 10), del = [];
+    for (const pre of ['vc:', 'vp:']) for (const [k, v] of await this.ctx.storage.list({ prefix: pre })) if (!v || (v.exp || 0) < now - 864e5) del.push(k);
+    for (const pre of ['vs:', 've:', 'vg:', 'rd:', 'adm:', 'reads:', 'orders:']) for (const [k] of await this.ctx.storage.list({ prefix: pre })) { const d = (k.match(/\d{4}-\d{2}-\d{2}/) || [''])[0]; if (d && d < cut) del.push(k); }
+    for (const [k, v] of await this.ctx.storage.list({ prefix: 'lead:' })) if (!v || now - (v.at || 0) > KEEP_MS) del.push(k);
+    for (let i = 0; i < del.length; i += 128) await this.ctx.storage.delete(del.slice(i, i + 128));
+    return del.length;
+  }
   /* Atomic counter with a ceiling. Returns false once the ceiling is reached. */
   async bump(k, max) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return false; await this.ctx.storage.put(k, n + 1); return true; }
   /* Claims an order for one slow step (a read or a change) so two cannot run at once. Returns '' when claimed, or why not. */
@@ -151,7 +169,8 @@ export class Store extends DurableObject {
     const o = await this.ctx.storage.get(k);
     if (!o || !statuses.includes(o.status)) return 'step';
     if (o.busy && Date.now() - o.busy < BUSY_MS) return 'busy';
-    if (kind === 'read') o.reads = (o.reads || 0) + 1;
+    if (kind === 'read') { if ((o.reads || 0) >= MAX_READS) return 'reads'; o.reads = (o.reads || 0) + 1; }
+    if (kind === 'pay') { /* nothing extra: busy alone stops two checkouts at once */ }
     if (kind === 'revise') { if (o.revUsed) return 'step'; o.revUsed = true; }
     o.busy = Date.now(); await this.ctx.storage.put(k, o); return '';
   }
@@ -163,17 +182,19 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), { status
 const fail = (status, code, message) => json({ error: { code, message } }, status);
 /* Slow steps answer at once with a streamed body: a space every 10 s keeps the connection open, then the JSON result.
    Leading spaces are valid JSON, and a failure is sent as {error} in the same body. */
-function slow(work) {
+/* bg is the request's waitUntil, so the slow work finishes even if the visitor closes the page. */
+function slow(work, bg) {
   const { readable, writable } = new TransformStream(), w = writable.getWriter();
   const tick = setInterval(() => { w.write(enc.encode(' ')).catch(() => {}); }, 10000);
   w.write(enc.encode(' ')).catch(() => {});
-  (async () => {
+  const job = (async () => {
     let out;
     try { const r = await work(); out = await r.text(); }
     catch (e) { console.log('slow step failed', e && (e.stack || e.message || e)); out = JSON.stringify({ error: { code: 'server', message: 'Something went wrong on the server. Try again.' } }); }
     clearInterval(tick);
     try { await w.write(enc.encode(out)); await w.close(); } catch (e) { /* the visitor left; the result is saved on the order anyway */ }
   })();
+  if (bg) bg(job);
   return new Response(readable, { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } });
 }
 const str = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
@@ -431,24 +452,31 @@ function applyRead(o, j, pricing, revise) {
   else { o.status = 'unreadable'; if (params && !q) o.ai.problems.push('A printable model could not be built from the dimensions that were read.'); }
 }
 
-async function handle(request, env) {
+async function handle(request, env, bg) {
   const url = new URL(request.url), path = url.pathname.replace(/\/+$/, ''), m = request.method, db = store(env);
+  const slowBg = (work) => slow(work, bg);
   const pricing = { ...DEFAULT_PRICING, ...((await db.load('pricing')) || {}) };
   const body = async () => { const t = dec.decode(await readCapped(request, MAX_JSON)); try { const v = JSON.parse(t); if (v && typeof v === 'object') return v; } catch (e) { /* fall through */ } throw { status: 400 }; };
   const ip = ipKey(request.headers.get('cf-connecting-ip') || 'local'), today = day();
   /* No spend caps unless the owner sets one: DAILY_READ_CAP or DAILY_ORDER_CAP, as a whole number, in the Worker's variables. */
-  const capped = async (counter, name) => { const n = parseInt(env[name] || '', 10); return n > 0 ? !(await db.bump(counter + ':' + today, n)) : false; };
+  /* Spend caps. DAILY_READ_CAP and DAILY_ORDER_CAP in the Worker's variables override these defaults. */
+  const DEFAULT_CAP = { DAILY_READ_CAP: 40, DAILY_ORDER_CAP: 60 };
+  const capped = async (counter, name) => { const n = parseInt(env[name] || '', 10) || DEFAULT_CAP[name] || 0; return n > 0 ? !(await db.bump(counter + ':' + today, n)) : false; };
 
   if (path === '/api/config' && m === 'GET') return json({ pricing, post: POST, ready: !!env.ANTHROPIC_API_KEY, payments: stripeOn(env) });
 
   /* ----- owner ----- */
   if (path.startsWith('/api/admin')) {
-    const tries = 'adm:' + today + ':' + ip;
-    if (((await db.load(tries)) || 0) >= PASSCODE_TRIES) return fail(429, 'cap', 'Too many wrong tries from this connection today. Come back tomorrow.');
-    if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) { await db.bump(tries, PASSCODE_TRIES); return fail(401, 'unauthorised', 'Wrong passcode.'); }
+    const tries = 'adm:' + today + ':' + ip, given = request.headers.get('x-admin-key') || '';
+    const ok = !!env.ADMIN_PASSCODE && sameKey(await sha('k:' + given), await sha('k:' + env.ADMIN_PASSCODE));
+    if (!ok) {
+      /* Count the wrong try before answering, so parallel guesses all count. */
+      if (!(await db.bump(tries, PASSCODE_TRIES)) || !(await db.bump('adm:' + today + ':all', ADMIN_DAY_CAP))) return fail(429, 'cap', 'Too many wrong tries today. Come back tomorrow.');
+      return fail(401, 'unauthorised', 'Wrong passcode.');
+    }
     if (path === '/api/admin/orders' && m === 'GET') {
       const orders = await db.scan('o:');
-      for (const o of orders) { const p = await syncPay(env, o).catch(() => false), a = lapse(o), b = scrub(o); if (p || a || b) await db.save('o:' + o.id, o); }
+      for (const o of orders) { const rev = o.rev, p = await syncPay(env, o).catch(() => false), a = lapse(o), b = scrub(o); if (p || a || b) await db.saveIf('o:' + o.id, o, rev); }
       return json({ orders, pricing, alerts: alertView(env, await db.load('alerts')) });
     }
     if (path === '/api/admin/alerts' && m === 'POST') {
@@ -502,9 +530,9 @@ async function handle(request, env) {
 
   /* ----- customers ----- */
   if (path === '/api/verify/start' && m === 'POST') {
-    const b = await body(), name = str(b.name, 80), email = str(b.email, 120).toLowerCase();
+    const b = await body(), name = str(b.name, 60).replace(/[^\p{L}\p{M} .'-]/gu, '').trim(), email = str(b.email, 120).toLowerCase();
     if (!name || !EMAIL_RE.test(email)) return fail(400, 'bad_form', 'Add your name and a working email address.');
-    if (!(await db.bump('vs:' + today + ':' + ip, 20)) || !(await db.bump('ve:' + today + ':' + email, 6))) return fail(429, 'cap', 'Too many codes asked for today. Try again tomorrow, or email hello@smallbuild.com.au.');
+    if (!(await db.bump('vs:' + today + ':' + ip, 10)) || !(await db.bump('ve:' + today + ':' + email, 5)) || !(await db.bump('vg:' + today, 300))) return fail(429, 'cap', 'Too many codes asked for today. Try again tomorrow, or email hello@smallbuild.com.au.');
     const al = await db.load('alerts');
     await db.save('lead:' + email, { email, name, at: Date.now(), ip });
     if (mailKey(env, al)) {
@@ -512,7 +540,8 @@ async function handle(request, env) {
       const sent = await sendMail(env, email, 'Your Small Build Co code: ' + code,
         'Hi ' + name.split(' ')[0] + ',\n\nYour code is ' + code + '. Type it on the page to upload your plans. It works for 15 minutes.\n\nIf you did not ask for this, ignore this email.\n\nJono\nSmall Build Co, Ferny Hills\nsmallbuild.com.au\n', al);
       if (sent === 'sent') { await db.save('vc:' + email, { h: await sha(email + ':' + code), exp: Date.now() + CODE_MS, tries: 0 }); return json({ need: true }); }
-      console.log('code email not sent, letting the visitor through', sent);
+      console.log('code email not sent', sent);
+      return fail(502, 'mail', 'The code email could not be sent. Check the address, or email hello@smallbuild.com.au.');
     }
     /* No working email service yet: the email is recorded and the visitor goes straight on. */
     const pass = rid(24, 'abcdefghijklmnopqrstuvwxyz0123456789');
@@ -535,7 +564,8 @@ async function handle(request, env) {
     const name = str(b.name, 80), email = str(b.email, 120), addr = str(b.addr, 120);
     if (!name || !EMAIL_RE.test(email) || !addr) return fail(400, 'bad_form', 'Name, email and street address are needed.');
     const vp = await db.load('vp:' + str(b.pass, 40));
-    if (!vp || Date.now() > vp.exp || vp.email !== email.toLowerCase()) return fail(403, 'no_pass', 'Confirm your email first. Go back to the start and enter it again.');
+    if (!vp || vp.used || Date.now() > vp.exp || vp.email !== email.toLowerCase()) return fail(403, 'no_pass', 'Confirm your email first. Go back to the start and enter it again.');
+    vp.used = Date.now(); await db.save('vp:' + str(b.pass, 40), vp);
     if (await capped('orders', 'DAILY_ORDER_CAP')) return fail(429, 'cap', ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
@@ -549,15 +579,21 @@ async function handle(request, env) {
   if (om) {
     const k = 'o:' + om[1], o = await db.load(k);
     if (!o || !sameKey(url.searchParams.get('k'), o.key)) return fail(404, 'not_found', 'That order link is not right. Check it and try again.');
-    let paid = false;
+    const rev0 = o.rev; let paid = false;
     try { paid = await syncPay(env, o); } catch (e) { /* Stripe unreachable: show the order as it is */ }
-    if (paid && o.status === 'hold_placed') { const site = url.origin; await db.save('site', site); await notifyHold(env, db, o, site); }
-    if (lapse(o) || paid) await db.save(k, o);
+    const lapsed = lapse(o);
+    if (paid || lapsed) {
+      /* Only the request that wins the save sends the alert, so a sweep running at the same moment cannot double it. */
+      if (await db.saveIf(k, o, rev0)) { if (paid && o.status === 'hold_placed') { await db.save('site', url.origin); const r1 = o.rev; await notifyHold(env, db, o, url.origin); await db.saveIf(k, o, r1); } }
+      else { const now = await db.load(k); if (now) Object.assign(o, now); }
+    }
     const step = om[2] || '';
     if (!step && m === 'GET') return json({ order: publicView(o) });
     if (m !== 'POST') return fail(405, 'method', 'Not allowed.');
-    const WHY = { step: [409, 'bad_step', 'That step does not apply to this order right now.'], busy: [409, 'busy', 'Your plans are already being worked on. Give it a couple of minutes.'] };
-    const spend = async () => ((await capped('reads', 'DAILY_READ_CAP')) ? ERR.cap : '');
+    const WHY = { step: [409, 'bad_step', 'That step does not apply to this order right now.'], busy: [409, 'busy', 'Your plans are already being worked on. Give it a couple of minutes.'],
+      reads: [429, 'reads', 'These plans have been tried three times. Email hello@smallbuild.com.au and I will look at them myself.'] };
+    /* Daily cap across the site, plus a per-connection cap, so one visitor cannot run up the plan-reading bill. */
+    const spend = async () => ((await capped('reads', 'DAILY_READ_CAP')) || !(await db.bump('rd:' + today + ':' + ip, 6)) ? ERR.cap : '');
     /* The slow call is over: take the order as it is now, and only apply the result if it is still at the step we started from. */
     const finish = async (statuses, apply) => { const now = await db.load(k); if (!now) return fail(404, 'not_found', 'No such order.'); if (statuses.includes(now.status)) apply(now); now.busy = 0; await db.save(k, now); return json({ order: publicView(now) }); };
 
@@ -576,7 +612,7 @@ async function handle(request, env) {
       const no = await db.claim(k, open, 'read'); if (no) return fail(...WHY[no]);
       const pages = Math.min(40, +meta.pages || 0), over = await spend();
       if (over) return finish(open, (x) => { x.aiErr = over; });
-      return slow(async () => {
+      return slowBg(async () => {
         let j = null, err = null;
         /* Pass 1 reads the plans. Pass 2 sends the same pages back with the first answer and asks for an item-by-item check.
            The pages and prompt are marked for caching, so the second pass reuses them instead of paying for them again. */
@@ -601,7 +637,7 @@ async function handle(request, env) {
       const note = str((await body()).note, 600); if (!note) return fail(400, 'no_note', 'Say what should change.');
       const no = await db.claim(k, ['preview'], 'revise'); if (no) return fail(...WHY[no]);
       const over = await spend();
-      return slow(async () => {
+      return slowBg(async () => {
         let j = null, err = over;
         if (!over) { try { j = (await askClaude(env, [JSON.stringify({ type: 'text', text: revisePrompt(o, note) })])).v; } catch (e) { err = ERR[e && e.code] || ERR.upstream; } }
         if (!j) { await finish(['preview'], (x) => { x.revUsed = false; }); return fail(over ? 429 : 502, 'read_failed', err); }
@@ -609,18 +645,23 @@ async function handle(request, env) {
       });
     }
     if (step === '/hold') {
+      if (o.status === 'paying' && o.pay && o.pay.url) return json({ order: publicView(o), pay: o.pay.url });   // a double click: reuse the open checkout
       if (o.status !== 'preview' || !o.quote) return fail(409, 'bad_step', 'This order is not at the preview step.');
-      if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(...WHY.busy);
       const b = await body();
-      o.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
-      Object.assign(o, totals(o));
       const site = url.origin; await db.save('site', site);
       if (stripeOn(env)) {
-        /* Real payment: send the customer to Stripe. The hold is placed there; the order moves on when they come back, or at the next sweep. */
-        try { o.pay = await startCheckout(env, o, site); } catch (e) { return fail(502, 'stripe', e.message || 'Card payments could not be started. Try again.'); }
-        o.status = 'paying'; await db.save(k, o);
-        return json({ order: publicView(o), pay: o.pay.url });
+        /* Real payment: send the customer to Stripe. Claim the order first so two clicks cannot open two checkouts. */
+        const no = await db.claim(k, ['preview'], 'pay'); if (no) return fail(...WHY[no]);
+        const x = await db.load(k);
+        x.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; x.delivery = b.delivery === 'post' ? 'post' : 'pickup';
+        Object.assign(x, totals(x));
+        try { x.pay = await startCheckout(env, x, site); } catch (e) { x.busy = 0; await db.save(k, x); return fail(502, 'stripe', e.message || 'Card payments could not be started. Try again.'); }
+        x.status = 'paying'; x.busy = 0; await db.save(k, x);
+        return json({ order: publicView(x), pay: x.pay.url });
       }
+      if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(...WHY.busy);
+      o.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
+      Object.assign(o, totals(o));
       o.holdAt = Date.now(); o.status = 'hold_placed';
       await db.save(k, o);
       await notifyHold(env, db, o, site);
@@ -630,7 +671,15 @@ async function handle(request, env) {
     if (step === '/unpay') {
       /* The customer left Stripe without paying and wants the preview back. */
       if (o.status !== 'paying') return fail(409, 'bad_step', 'This order is not waiting on payment.');
-      if (o.pay && stripeOn(env)) { try { await stripe(env, 'POST', 'checkout/sessions/' + o.pay.session + '/expire', {}); } catch (e) { if (await syncPay(env, o).catch(() => false)) { await db.save(k, o); return json({ order: publicView(o) }); } } }
+      if (o.pay && stripeOn(env)) {
+        try { await stripe(env, 'POST', 'checkout/sessions/' + o.pay.session + '/expire', {}); }
+        catch (e) {
+          /* Expire fails if the checkout already finished or already expired. Look before resetting, so a paid hold is never dropped. */
+          const changed = await syncPay(env, o).catch(() => null);
+          if (changed === null || o.status !== 'preview') { if (changed) await db.save(k, o); return changed === null ? fail(502, 'stripe', 'Card payments could not be reached. Try again.') : json({ order: publicView(o) }); }
+          await db.save(k, o); return json({ order: publicView(o) });
+        }
+      }
       o.status = 'preview'; o.pay = null; await db.save(k, o);
       return json({ order: publicView(o) });
     }
@@ -641,32 +690,52 @@ async function handle(request, env) {
 /* Every 10 minutes: pick up paid checkouts, lapse holds past 24 hours, release card holds, remind the owner when 3 hours are left, and remove contact details after 12 months. */
 async function sweep(env) {
   const db = store(env), al = await db.load('alerts'), site = (await db.load('site')) || '';
-  for (const o of await db.scan('o:')) {
-    let changed = false;
+  for (const o of await db.scanAll('o:')) {
+    const toRelease = ['declined', 'lapsed'].includes(o.status) && o.pay && o.pay.pi && !o.pay.released && !o.pay.captured;
+    if (FINAL.includes(o.status) && o.scrubbed && !toRelease) continue;
+    const rev0 = o.rev; let changed = false, alert = false;
     if (o.status === 'paying') {
       /* A customer who paid but closed the page before coming back. */
-      try { if (await syncPay(env, o)) { changed = true; if (o.status === 'hold_placed') await notifyHold(env, db, o, site); } } catch (e) { /* try again next sweep */ }
+      try { if (await syncPay(env, o)) { changed = true; alert = o.status === 'hold_placed'; } } catch (e) { /* try again next sweep */ }
     }
     if (o.status === 'hold_placed' && !o.reminded && Date.now() - o.holdAt > REVIEW_MS - 3 * 3600e3 && Date.now() - o.holdAt <= REVIEW_MS) {
-      o.reminded = await textOwner(env, 'Reminder: order ' + o.id + ' (' + o.name + ') lapses in under 3 hours unless you accept or decline it. ' + site + '/#queue', al); changed = true;
+      o.reminded = 'pending'; changed = true;
     }
-    if (lapse(o)) { await textOwner(env, 'Order ' + o.id + ' (' + o.name + ') lapsed: not accepted within 24 hours. The hold is released and nothing is charged.', al); changed = true; }
+    let lapsedNow = false;
+    if (lapse(o)) { changed = true; lapsedNow = true; }
     if (['declined', 'lapsed'].includes(o.status) && (await releaseHold(env, o).catch(() => false))) changed = true;
     if (scrub(o)) changed = true;
-    if (changed) await db.save('o:' + o.id, o);
+    /* Save first and only alert if this sweep won the save: an owner click in the meantime always wins. */
+    if (!changed || !(await db.saveIf('o:' + o.id, o, rev0))) continue;
+    const r1 = o.rev;
+    if (alert) await notifyHold(env, db, o, site);
+    if (o.reminded === 'pending') o.reminded = await textOwner(env, 'Reminder: order ' + o.id + ' lapses in under 3 hours unless you accept or decline it. ' + site + '/#queue', al);
+    if (lapsedNow) await textOwner(env, 'Order ' + o.id + ' lapsed: not accepted within 24 hours. The hold is released and nothing is charged.', al);
+    if (alert || lapsedNow || o.reminded) await db.saveIf('o:' + o.id, o, r1);
   }
+  await db.purge();
 }
 
+/* Security headers on every response. Everything the site loads is its own, except Google Fonts. */
+const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+function secure(r) {
+  const h = new Headers(r.headers);
+  h.set('content-security-policy', CSP); h.set('strict-transport-security', 'max-age=31536000; includeSubDomains');
+  h.set('x-content-type-options', 'nosniff'); h.set('referrer-policy', 'same-origin'); h.set('x-frame-options', 'DENY');
+  h.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  return new Response(r.body, { status: r.status, statusText: r.statusText, headers: h });
+}
 export default {
   async scheduled(event, env, ctx) { ctx.waitUntil(sweep(env)); },
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
-    try { return await handle(request, env); }
+    if (!url.pathname.startsWith('/api/')) return secure(await env.ASSETS.fetch(request));
+    const bg = ctx && ctx.waitUntil ? (p) => ctx.waitUntil(p) : null;
+    try { return secure(await handle(request, env, bg)); }
     catch (e) {
-      if (e && e.status) return fail(e.status, 'bad_request', e.status === 413 ? 'That is too much for one request.' : 'That request could not be read.');
+      if (e && e.status) return secure(fail(e.status, 'bad_request', e.status === 413 ? 'That is too much for one request.' : 'That request could not be read.'));
       console.log('server error', e && (e.stack || e.message || e));
-      return fail(500, 'server', 'Something went wrong on the server. Try again.');
+      return secure(fail(500, 'server', 'Something went wrong on the server. Try again.'));
     }
   },
 };
