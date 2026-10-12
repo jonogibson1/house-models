@@ -1,6 +1,6 @@
 /* Small Build Co (smallbuild.com.au): one Cloudflare Worker.
    Serves the site from ./public, stores orders in a Durable Object, and reads plans through the Anthropic API.
-   Secrets (set at deploy): ANTHROPIC_API_KEY, ADMIN_PASSCODE. */
+   Secrets (set at deploy): ANTHROPIC_API_KEY, ADMIN_PASSCODE, and STRIPE_SECRET_KEY to take real card holds. */
 import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
@@ -56,6 +56,68 @@ async function emailOwner(env, subject, text, al) {
       body: JSON.stringify({ from: env.EMAIL_FROM || 'Small Build Co <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com'], subject, text }) });
     return r.ok ? 'sent' : 'failed ' + r.status;
   } catch (e) { return 'failed'; }
+}
+/* ---------- Stripe: card holds through Checkout, captured when the owner accepts ----------
+   Off until STRIPE_SECRET_KEY is set. Without it the site keeps its test-mode hold page and nothing is charged. */
+const stripeOn = (env) => !!env.STRIPE_SECRET_KEY;
+async function stripe(env, method, path, params) {
+  let r;
+  try {
+    r = await fetch((env.STRIPE_BASE_URL || 'https://api.stripe.com') + '/v1/' + path, { method,
+      headers: { authorization: 'Bearer ' + env.STRIPE_SECRET_KEY, ...(params ? { 'content-type': 'application/x-www-form-urlencoded' } : {}) },
+      body: params ? new URLSearchParams(params) : undefined });
+  } catch (e) { throw { code: 'stripe', message: 'Card payments could not be reached. Try again in a minute.' }; }
+  const j = await r.json().catch(() => null);
+  if (!r.ok) { console.log('stripe error', path, r.status, j && j.error && j.error.message); throw { code: 'stripe', message: (j && j.error && j.error.message) || 'Card payments returned an error.' }; }
+  return j;
+}
+const ITEM = { print: 'Printed model', tree: 'Christmas tree version', stl: 'Print files only' };
+async function startCheckout(env, o, origin) {
+  const back = origin + '/?o=' + o.id + '.' + o.key;
+  const what = ITEM[o.choice] + (o.choice === 'stl' ? '' : ', 1:' + (o.choice === 'tree' && o.quote.tree ? o.quote.tree.scale : o.quote.scale));
+  const p = { mode: 'payment', customer_email: o.email, client_reference_id: o.id, 'metadata[order]': o.id,
+    success_url: back + '&paid=1', cancel_url: back + '&cancelled=1', expires_at: String(Math.floor(Date.now() / 1000) + 3600),
+    'payment_intent_data[capture_method]': 'manual', 'payment_intent_data[description]': 'Small Build Co order ' + o.id + ', ' + o.addr,
+    'payment_intent_data[metadata][order]': o.id,
+    'line_items[0][quantity]': '1', 'line_items[0][price_data][currency]': 'aud', 'line_items[0][price_data][unit_amount]': String(Math.round(o.price * 100)),
+    'line_items[0][price_data][product_data][name]': what, 'line_items[0][price_data][product_data][description]': o.addr + (o.suburb ? ', ' + o.suburb : '') };
+  if (o.ship > 0) Object.assign(p, { 'line_items[1][quantity]': '1', 'line_items[1][price_data][currency]': 'aud', 'line_items[1][price_data][unit_amount]': String(Math.round(o.ship * 100)),
+    'line_items[1][price_data][product_data][name]': 'Postage, Australia Post Parcel Post' });
+  const s = await stripe(env, 'POST', 'checkout/sessions', p);
+  return { session: s.id, url: s.url, at: Date.now() };
+}
+/* Looks at an order waiting on Stripe. Returns true if it changed: hold placed, or the checkout expired and it is back at the preview. */
+async function syncPay(env, o) {
+  if (o.status !== 'paying' || !o.pay || !stripeOn(env)) return false;
+  const s = await stripe(env, 'GET', 'checkout/sessions/' + o.pay.session + '?expand[]=payment_intent');
+  const pi = s.payment_intent;
+  if (s.status === 'complete' && pi && pi.status === 'requires_capture') {
+    o.pay.pi = pi.id; o.status = 'hold_placed'; o.holdAt = (pi.created ? pi.created * 1000 : Date.now()); return true;
+  }
+  if (s.status === 'expired') { o.status = 'preview'; o.pay = null; return true; }
+  return false;
+}
+/* Releases the card hold on a declined or lapsed order. Safe to call more than once. */
+async function releaseHold(env, o) {
+  if (!o.pay || !o.pay.pi || o.pay.released || o.pay.captured || !stripeOn(env)) return false;
+  try { await stripe(env, 'POST', 'payment_intents/' + o.pay.pi + '/cancel', {}); }
+  catch (e) { const pi = await stripe(env, 'GET', 'payment_intents/' + o.pay.pi).catch(() => null); if (!pi || pi.status !== 'canceled') return false; }
+  o.pay.released = Date.now(); return true;
+}
+/* Tells the owner a hold is waiting, by email and text. */
+async function notifyHold(env, db, o, site) {
+  const what = ITEM[o.choice] || o.choice, al = await db.load('alerts');
+  const by = new Date(o.holdAt + REVIEW_MS).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  o.emailed = await emailOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2),
+    'New order to review.\n\n'
+    + 'Order: ' + o.id + '\nName: ' + o.name + '\nEmail: ' + o.email + '\nHouse: ' + o.addr + (o.suburb ? ', ' + o.suburb : '') + '\n'
+    + 'Ordered: ' + what + (o.choice === 'stl' ? '' : ', ' + (o.delivery === 'post' ? 'Australia Post' : 'pickup from Ferny Hills')) + '\n'
+    + 'Total held: A$' + (+o.total).toFixed(2) + (o.ship ? ' (includes A$' + (+o.ship).toFixed(2) + ' postage)' : '') + (o.pay && o.pay.pi ? ', card hold on Stripe ' + o.pay.pi : ', test mode, no card') + '\n'
+    + (o.quote ? 'Model: 1:' + o.quote.scale + ', ' + o.quote.size.join(' x ') + ' mm, about ' + o.quote.grams + ' g, about ' + o.quote.hours + ' h to print\n' : '')
+    + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
+    + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
+    + 'Review it: ' + site + '/#queue (Owner sign-in)\n', al);
+  o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
 }
 const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
@@ -202,7 +264,7 @@ function totals(o) {
   const ship = o.choice === 'stl' || o.delivery !== 'post' ? 0 : tree ? o.quote.tree.ship.cost : o.quote.ship.cost;
   return { price, ship, total: Math.round((price + ship) * 100) / 100 };
 }
-const publicView = (o) => { const { key, ip, busy, reads, emailed, texted, reminded, ...rest } = o; return rest; };
+const publicView = (o) => { const { key, ip, busy, reads, emailed, texted, reminded, pay, ...rest } = o; return { ...rest, payUrl: o.status === 'paying' && pay ? pay.url : undefined, carded: !!(pay && pay.pi) }; };
 
 /* ---------- prompts ---------- */
 const SHAPE = 'Reply with only one JSON object, no other text, in exactly this shape:\n'
@@ -370,7 +432,7 @@ async function handle(request, env) {
   /* No spend caps unless the owner sets one: DAILY_READ_CAP or DAILY_ORDER_CAP, as a whole number, in the Worker's variables. */
   const capped = async (counter, name) => { const n = parseInt(env[name] || '', 10); return n > 0 ? !(await db.bump(counter + ':' + today, n)) : false; };
 
-  if (path === '/api/config' && m === 'GET') return json({ pricing, post: POST, ready: !!env.ANTHROPIC_API_KEY });
+  if (path === '/api/config' && m === 'GET') return json({ pricing, post: POST, ready: !!env.ANTHROPIC_API_KEY, payments: stripeOn(env) });
 
   /* ----- owner ----- */
   if (path.startsWith('/api/admin')) {
@@ -379,7 +441,7 @@ async function handle(request, env) {
     if (!env.ADMIN_PASSCODE || !sameKey(request.headers.get('x-admin-key'), env.ADMIN_PASSCODE)) { await db.bump(tries, PASSCODE_TRIES); return fail(401, 'unauthorised', 'Wrong passcode.'); }
     if (path === '/api/admin/orders' && m === 'GET') {
       const orders = await db.scan('o:');
-      for (const o of orders) { const a = lapse(o), b = scrub(o); if (a || b) await db.save('o:' + o.id, o); }
+      for (const o of orders) { const p = await syncPay(env, o).catch(() => false), a = lapse(o), b = scrub(o); if (p || a || b) await db.save('o:' + o.id, o); }
       return json({ orders, pricing, alerts: alertView(env, await db.load('alerts')) });
     }
     if (path === '/api/admin/alerts' && m === 'POST') {
@@ -408,8 +470,14 @@ async function handle(request, env) {
       const o = await db.load('o:' + am[1]); if (!o) return fail(404, 'not_found', 'No such order.');
       if (lapse(o)) await db.save('o:' + o.id, o);
       const b = await body(), act = b.action;
-      if (act === 'accept' && o.status === 'hold_placed') { o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); o.kit = KIT_VERSION; }
-      else if (act === 'decline' && o.status === 'hold_placed') { o.status = 'declined'; o.declineReason = str(b.reason, 200); o.decidedAt = Date.now(); }
+      if (act === 'accept' && o.status === 'hold_placed') {
+        if (o.pay && o.pay.pi && stripeOn(env)) {
+          try { await stripe(env, 'POST', 'payment_intents/' + o.pay.pi + '/capture', {}); o.pay.captured = Date.now(); }
+          catch (e) { return fail(502, 'stripe', 'The card could not be charged: ' + (e.message || 'Stripe error') + ' Nothing has changed on the order.'); }
+        }
+        o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); o.kit = KIT_VERSION;
+      }
+      else if (act === 'decline' && o.status === 'hold_placed') { o.status = 'declined'; o.declineReason = str(b.reason, 200); o.decidedAt = Date.now(); await releaseHold(env, o).catch(() => false); }
       else if (act === 'printing' && o.status === 'accepted') o.status = 'printing';
       else if (act === 'ready' && o.status === 'printing') o.status = 'ready';
       else if (act === 'collected' && o.status === 'ready') o.status = 'collected';
@@ -439,11 +507,14 @@ async function handle(request, env) {
     await db.save('o:' + o.id, o);
     return json({ order: publicView(o), key: o.key });
   }
-  const om = path.match(/^\/api\/orders\/([A-Z0-9-]{4,12})(\/read|\/revise|\/hold)?$/);
+  const om = path.match(/^\/api\/orders\/([A-Z0-9-]{4,12})(\/read|\/revise|\/hold|\/unpay)?$/);
   if (om) {
     const k = 'o:' + om[1], o = await db.load(k);
     if (!o || !sameKey(url.searchParams.get('k'), o.key)) return fail(404, 'not_found', 'That order link is not right. Check it and try again.');
-    if (lapse(o)) await db.save(k, o);
+    let paid = false;
+    try { paid = await syncPay(env, o); } catch (e) { /* Stripe unreachable: show the order as it is */ }
+    if (paid && o.status === 'hold_placed') { const site = url.origin; await db.save('site', site); await notifyHold(env, db, o, site); }
+    if (lapse(o) || paid) await db.save(k, o);
     const step = om[2] || '';
     if (!step && m === 'GET') return json({ order: publicView(o) });
     if (m !== 'POST') return fail(405, 'method', 'Not allowed.');
@@ -504,38 +575,45 @@ async function handle(request, env) {
       if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(...WHY.busy);
       const b = await body();
       o.choice = CHOICES.includes(b.choice) ? b.choice : 'print'; o.delivery = b.delivery === 'post' ? 'post' : 'pickup';
-      Object.assign(o, totals(o)); o.holdAt = Date.now(); o.status = 'hold_placed';
-      await db.save(k, o);
-      const what = { print: 'Printed model', tree: 'Christmas tree version', stl: 'Print files only' }[o.choice] || o.choice;
-      const by = new Date(o.holdAt + REVIEW_MS).toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+      Object.assign(o, totals(o));
       const site = url.origin; await db.save('site', site);
-      const al = await db.load('alerts');
-      o.emailed = await emailOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2),
-        'New order to review.\n\n'
-        + 'Order: ' + o.id + '\nName: ' + o.name + '\nEmail: ' + o.email + '\nHouse: ' + o.addr + (o.suburb ? ', ' + o.suburb : '') + '\n'
-        + 'Ordered: ' + what + (o.choice === 'stl' ? '' : ', ' + (o.delivery === 'post' ? 'Australia Post' : 'pickup from Ferny Hills')) + '\n'
-        + 'Total held: A$' + (+o.total).toFixed(2) + (o.ship ? ' (includes A$' + (+o.ship).toFixed(2) + ' postage)' : '') + '\n'
-        + (o.quote ? 'Model: 1:' + o.quote.scale + ', ' + o.quote.size.join(' x ') + ' mm, about ' + o.quote.grams + ' g, about ' + o.quote.hours + ' h to print\n' : '')
-        + (o.revNote ? 'Change asked: ' + o.revNote + '\n' : '')
-        + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
-        + 'Review it: ' + site + '/#queue (Owner sign-in)\n', al);
-      o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + ', ' + o.name + ', ' + o.addr + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
+      if (stripeOn(env)) {
+        /* Real payment: send the customer to Stripe. The hold is placed there; the order moves on when they come back, or at the next sweep. */
+        try { o.pay = await startCheckout(env, o, site); } catch (e) { return fail(502, 'stripe', e.message || 'Card payments could not be started. Try again.'); }
+        o.status = 'paying'; await db.save(k, o);
+        return json({ order: publicView(o), pay: o.pay.url });
+      }
+      o.holdAt = Date.now(); o.status = 'hold_placed';
       await db.save(k, o);
+      await notifyHold(env, db, o, site);
+      await db.save(k, o);
+      return json({ order: publicView(o) });
+    }
+    if (step === '/unpay') {
+      /* The customer left Stripe without paying and wants the preview back. */
+      if (o.status !== 'paying') return fail(409, 'bad_step', 'This order is not waiting on payment.');
+      if (o.pay && stripeOn(env)) { try { await stripe(env, 'POST', 'checkout/sessions/' + o.pay.session + '/expire', {}); } catch (e) { if (await syncPay(env, o).catch(() => false)) { await db.save(k, o); return json({ order: publicView(o) }); } } }
+      o.status = 'preview'; o.pay = null; await db.save(k, o);
       return json({ order: publicView(o) });
     }
   }
   return fail(404, 'not_found', 'Not found.');
 }
 
-/* Hourly: lapse holds past 24 hours, remind the owner when 3 hours are left, and remove contact details after 12 months. */
+/* Every 10 minutes: pick up paid checkouts, lapse holds past 24 hours, release card holds, remind the owner when 3 hours are left, and remove contact details after 12 months. */
 async function sweep(env) {
   const db = store(env), al = await db.load('alerts'), site = (await db.load('site')) || '';
   for (const o of await db.scan('o:')) {
     let changed = false;
+    if (o.status === 'paying') {
+      /* A customer who paid but closed the page before coming back. */
+      try { if (await syncPay(env, o)) { changed = true; if (o.status === 'hold_placed') await notifyHold(env, db, o, site); } } catch (e) { /* try again next sweep */ }
+    }
     if (o.status === 'hold_placed' && !o.reminded && Date.now() - o.holdAt > REVIEW_MS - 3 * 3600e3 && Date.now() - o.holdAt <= REVIEW_MS) {
       o.reminded = await textOwner(env, 'Reminder: order ' + o.id + ' (' + o.name + ') lapses in under 3 hours unless you accept or decline it. ' + site + '/#queue', al); changed = true;
     }
     if (lapse(o)) { await textOwner(env, 'Order ' + o.id + ' (' + o.name + ') lapsed: not accepted within 24 hours. The hold is released and nothing is charged.', al); changed = true; }
+    if (['declined', 'lapsed'].includes(o.status) && (await releaseHold(env, o).catch(() => false))) changed = true;
     if (scrub(o)) changed = true;
     if (changed) await db.save('o:' + o.id, o);
   }

@@ -109,7 +109,7 @@ function shipFor(r){
   return { cost:cost, box:[L,W,H], kg:kg, actual:actual, cubic:cubic };
 }
 
-var STATUS = { received:['Plans received','att'], revision:['Change requested','att'], unreadable:['Could not read','bad'], preview:['Preview sent',''], hold_placed:['Needs your OK','att'],
+var STATUS = { received:['Plans received','att'], revision:['Change requested','att'], unreadable:['Could not read','bad'], preview:['Preview sent',''], paying:['At payment',''], hold_placed:['Needs your OK','att'],
   accepted:['Confirmed, paid','ok'], printing:['Printing','ok'], ready:['Ready','ok'], collected:['Collected',''], delivered:['File sent','ok'], declined:['Declined','bad'], lapsed:['Hold lapsed','bad'] };
 function pill(o){ var s=STATUS[o.status]||['?','']; var t=s[0]; if(o.status==='ready') t=o.delivery==='post'?'Posted':'Ready for pickup'; if(o.status==='received' && o.aiErr) t='Read failed'; return '<span class="pill '+s[1]+'">'+t+'</span>'; }
 
@@ -378,7 +378,7 @@ async function readNow(id){
 function timeline(o){
   var steps = o.choice==='stl' ? ['Plans received','Preview ready','Card hold placed','Confirmed and charged','File sent']
     : ['Plans received','Preview ready','Card hold placed','Confirmed and charged','Printing', o.delivery==='post'?'Posted':'Ready for pickup'];
-  var at = {received:0,revision:0,unreadable:0,preview:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2,lapsed:2}[o.status];
+  var at = {received:0,revision:0,unreadable:0,preview:1,paying:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2,lapsed:2}[o.status];
   var fin = o.status==='collected'||o.status==='delivered'||o.status==='ready';
   return '<ol class="tl">'+steps.map(function(s,i){ return '<li class="'+(i<at||(fin&&i===at)?'done':i===at?'now':'')+'">'+s+'</li>'; }).join('')+'</ol>';
 }
@@ -426,7 +426,7 @@ var pollT=null;
 function showOrder(){
   clearInterval(pollT);
   pollT=setInterval(function(){
-    if(document.hidden || current!=='order' || !cur || ui.pending || ui.busy || ['hold_placed','accepted','printing'].indexOf(cur.status)<0) return;
+    if(document.hidden || current!=='order' || !cur || ui.pending || ui.busy || ['paying','hold_placed','accepted','printing'].indexOf(cur.status)<0) return;
     api('GET', opath(cur.id)).then(function(r){ if(cur && r.order.id===cur.id && r.order.status!==cur.status && !ui.busy){ cur=r.order; renderOrder(); toast('Your order has been updated.'); } }, function(){});
   }, 15000);
   if(ui.pending){ renderOrder(); return; }
@@ -463,13 +463,14 @@ function renderOrder(){
   }
   var r=built(modelFor(o),0.8,o), q=o.quote, sh=shipOf(o,o.choice);
   if(o.status==='preview' && ui.pay){
-    var t=totalsOf(o,o.choice,o.delivery);
+    var t=totalsOf(o,o.choice,o.delivery), live=!!(cfg&&cfg.payments);
     h=head+'<div class="split" style="margin-top:22px"><div class="stack"><span class="eyebrow">Step 3 of 4</span><h3>Card hold</h3>'
      +'<p class="muted">A hold of '+money2(t.total)+' is placed on your card now. Nothing is charged until Jono confirms your job, within 24 hours. If he can\'t take it on, or doesn\'t confirm in time, the hold is released.</p>'
-     +'<div class="cardmock"><div class="note warn"><b>Test mode.</b> This is a pretend payment page. No card details are collected and nothing is charged. The test card is filled in for you.</div>'
+     +(live?'<div class="note quiet">You enter your card on Stripe\'s secure payment page, then come straight back here. Small Build Co never sees your card number.</div>'
+     :'<div class="cardmock"><div class="note warn"><b>Test mode.</b> This is a pretend payment page. No card details are collected and nothing is charged. The test card is filled in for you.</div>'
      +'<div class="field"><label for="pay-num">Card number</label><input type="text" id="pay-num" class="mono" value="4242 4242 4242 4242" readonly></div>'
-     +'<div class="grid2"><div class="field"><label for="pay-exp">Expiry</label><input type="text" id="pay-exp" class="mono" value="12 / 34" readonly></div><div class="field"><label for="pay-cvc">CVC</label><input type="text" id="pay-cvc" class="mono" value="123" readonly></div></div></div>'
-     +'<div class="row"><button class="btn" id="pay-go">Place hold of '+money2(t.total)+'</button><button class="btn ghost" id="pay-back">Back to preview</button></div></div>'
+     +'<div class="grid2"><div class="field"><label for="pay-exp">Expiry</label><input type="text" id="pay-exp" class="mono" value="12 / 34" readonly></div><div class="field"><label for="pay-cvc">CVC</label><input type="text" id="pay-cvc" class="mono" value="123" readonly></div></div></div>')
+     +'<div class="row"><button class="btn" id="pay-go">'+(live?'Continue to secure payment':'Place hold of '+money2(t.total))+'</button><button class="btn ghost" id="pay-back">Back to preview</button></div></div>'
      +'<div class="card stack"><h3>Your order</h3><dl class="spec"><dt>Item</dt><dd>'+(o.choice==='stl'?'STL files':o.choice==='tree'?'Christmas tree version, 1:'+q.tree.scale:'Printed model, 1:'+q.scale)+'</dd><dt>House</dt><dd>'+esc(o.addr)+'</dd>'
      +'<dt>Handover</dt><dd>'+(o.choice==='stl'?'Download here':o.delivery==='post'?'Australia Post to '+esc(o.addr)+(o.suburb?', '+esc(o.suburb):''):'Pickup, Ferny Hills')+'</dd></dl>'
      +'<div class="totals"><span>'+itemName(o.choice)+'</span><span>'+money2(t.price)+'</span>'+(o.choice==='stl'?'':'<span>'+(o.delivery==='post'?'Postage, Parcel Post':'Pickup')+'</span><span>'+money2(t.ship)+'</span>')
@@ -478,7 +479,7 @@ function renderOrder(){
     $('#pay-back').addEventListener('click',function(){ ui.pay=false; renderOrder(); });
     $('#pay-go').addEventListener('click',function(){
       var b=this; b.disabled=true; ui.busy='hold';
-      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. Jono has 24 hours to confirm.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
+      api('POST', opath(o.id,'/hold'), {choice:o.choice,delivery:o.delivery}).then(function(res){ if(res.pay){ location.href=res.pay; return; } cur=res.order; ui.pay=false; ui.busy=''; renderOrder(); toast('Hold placed. Jono has 24 hours to confirm.'); }, function(e){ ui.busy=''; b.disabled=false; toast(e.message); });
     });
     return;
   }
@@ -501,6 +502,9 @@ function renderOrder(){
      +'<label><input type="radio" name="dv" id="dv-post" value="post"'+(dv==='post'?' checked':'')+'><span class="lab">Australia Post</span><span class="price">'+money2(sh.cost)+'</span><span class="muted small">Parcel Post. Box about '+sh.box.join(' x ')+' mm, charged as '+(sh.kg<1?Math.ceil(sh.kg*1000)+' g':sh.kg.toFixed(2)+' kg')+'.</span></label></div>'
      +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Nothing is charged until Jono confirms.</span></div>')
      +((!o.revUsed&&ui.step==='go')?'<p class="small"><button class="btn ghost sm" id="go-back">Back: I would like changes instead</button></p>':'');
+  } else if(o.status==='paying'){
+    right='<span class="eyebrow">Step 3 of 4</span><h3>Payment not finished</h3><p class="muted">Your card hold has not gone through yet. If you have just paid, this page updates in a few seconds.</p>'
+     +'<div class="row">'+(o.payUrl?'<a class="btn" href="'+esc(o.payUrl)+'">Continue to secure payment</a>':'')+'<button class="btn ghost" id="unpay">Back to preview</button></div>'+timeline(o);
   } else if(o.status==='hold_placed'){
     right='<h3>Hold placed. Waiting on Jono.</h3><p class="muted">A hold of '+money2(o.total)+' is on your card. Jono reviews it and confirms by <b>'+when(o.holdAt+24*3600e3)+'</b>. If he doesn\'t, the hold is released by itself and nothing is charged.</p>'+timeline(o)
      +'<p class="muted small">This page updates by itself when he confirms.</p>';
@@ -509,13 +513,14 @@ function renderOrder(){
   } else if(o.status==='declined'){
     right='<h3>Sorry, I can\'t make this one</h3><div class="note bad">'+esc(o.declineReason||'Jono could not take this job on.')+' The hold on your card has been released and nothing was charged.</div>';
   } else {
-    var msg={accepted:'Confirmed. Your card has been charged '+money2(o.total)+' (test).',printing:'Your model is on the printer.',ready:(o.delivery==='post'?'Your model has been posted with Australia Post.':'Your model is ready. Pickup from Ferny Hills. Jono will message you the address and a time.'),collected:'Collected. Enjoy it.',delivered:'Confirmed and charged '+money2(o.total)+' (test). Your files are ready.'}[o.status];
+    var tst=o.carded?'':' (test)'; var msg={accepted:'Confirmed. Your card has been charged '+money2(o.total)+tst+'.',printing:'Your model is on the printer.',ready:(o.delivery==='post'?'Your model has been posted with Australia Post.':'Your model is ready. Pickup from Ferny Hills. Jono will message you the address and a time.'),collected:'Collected. Enjoy it.',delivered:'Confirmed and charged '+money2(o.total)+tst+'. Your files are ready.'}[o.status];
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
   h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it, scroll to zoom. The can beside it is a standard 375 ml drink can, for size.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
   var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
+  var up=$('#unpay'); if(up) up.addEventListener('click',function(){ up.disabled=true; ui.busy='unpay'; api('POST', opath(o.id,'/unpay'), {}).then(function(res){ cur=res.order; ui.busy=''; renderOrder(); }, function(e){ ui.busy=''; up.disabled=false; toast(e.message); }); });
   $$('input[name=choice]',root).forEach(function(i){ i.addEventListener('change',function(){ var dv=$('#dv-post'); o.choice=this.value; if(dv) o.delivery=dv.checked?'post':'pickup'; renderOrder(); var f=$('#ch-'+o.choice); if(f) f.focus({preventScroll:true}); }); });
   $$('input[name=dv]',root).forEach(function(i){ i.addEventListener('change',function(){ o.delivery=this.value; }); });
   var tp=$('#to-pay'); if(tp) tp.addEventListener('click',function(){ o.choice=($('#ch-stl').checked?'stl':$('#ch-tree')&&$('#ch-tree').checked?'tree':'print'); o.delivery=($('#dv-post').checked?'post':'pickup'); ui.pay=true; renderOrder(); window.scrollTo(0,0); });
@@ -714,7 +719,7 @@ function bindAlerts(){
 }
 
 /* ---------- start ---------- */
-api('GET','/api/config').then(function(c){ cfg=c; if(current==='home' && Kit) renderHome(); var nr=$('#not-ready'); if(nr) nr.hidden=!!c.ready; }, function(){});
+api('GET','/api/config').then(function(c){ cfg=c; if(current==='home' && Kit) renderHome(); var nr=$('#not-ready'); if(nr) nr.hidden=!!c.ready; var tb=document.querySelector('.testbar'); if(tb && c.payments) tb.hidden=true; }, function(){});
 import('/kit.js').then(function(k){ return k.load('').then(function(){ Kit=k; Kit.setTextRaster(canvasRuns); }); }).then(function(){
   var m=/[?&]o=([A-Z0-9-]{4,12})\.([a-z0-9]{8,40})/.exec(location.search);
   if(pendingGo){ var pg=pendingGo; pendingGo=null; go(pg[0],pg[1]); return; }
