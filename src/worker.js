@@ -78,7 +78,7 @@ async function startCheckout(env, o, origin) {
   const p = { mode: 'payment', customer_email: o.email, client_reference_id: o.id, 'metadata[order]': o.id,
     success_url: back + '&paid=1', cancel_url: back + '&cancelled=1', expires_at: String(Math.floor(Date.now() / 1000) + 3600),
     'payment_intent_data[capture_method]': 'manual', 'payment_intent_data[description]': 'Small Build Co order ' + o.id + ', ' + o.addr,
-    'payment_intent_data[metadata][order]': o.id,
+    'payment_intent_data[metadata][order]': o.id, 'payment_intent_data[statement_descriptor_suffix]': 'SMALL BUILD',
     'line_items[0][quantity]': '1', 'line_items[0][price_data][currency]': 'aud', 'line_items[0][price_data][unit_amount]': String(Math.round(o.price * 100)),
     'line_items[0][price_data][product_data][name]': what, 'line_items[0][price_data][product_data][description]': o.addr + (o.suburb ? ', ' + o.suburb : '') };
   if (o.ship > 0) Object.assign(p, { 'line_items[1][quantity]': '1', 'line_items[1][price_data][currency]': 'aud', 'line_items[1][price_data][unit_amount]': String(Math.round(o.ship * 100)),
