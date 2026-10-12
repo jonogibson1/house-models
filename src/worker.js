@@ -47,16 +47,23 @@ const alertView = (env, al) => { al = al || {}; return {
   push: !!(env.NTFY_TOPIC || al.ntfy), topic: env.NTFY_TOPIC ? '(set on the server)' : al.ntfy || null,
   sms: !!(env.TWILIO_SID && env.TWILIO_TOKEN && env.TWILIO_FROM && env.NOTIFY_PHONE),
   email: !!(env.RESEND_API_KEY || al.resendKey), emailTo: env.NOTIFY_EMAIL || al.email || 'jonathan@binbypass.com' }; };
-/* Email the owner. Sends through Resend when RESEND_API_KEY is set; without it nothing is sent and the order still goes through. */
-async function emailOwner(env, subject, text, al) {
-  const key = env.RESEND_API_KEY || (al && al.resendKey);
+/* Sends an email through Resend when RESEND_API_KEY is set (or a key saved in the owner queue). Without one nothing is sent. */
+const mailKey = (env, al) => env.RESEND_API_KEY || (al && al.resendKey) || '';
+async function sendMail(env, to, subject, text, al) {
+  const key = mailKey(env, al);
   if (!key) return 'not set up';
   try {
     const r = await fetch((env.RESEND_BASE_URL || 'https://api.resend.com') + '/emails', { method: 'POST', headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: env.EMAIL_FROM || 'Small Build Co <onboarding@resend.dev>', to: [env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com'], subject, text }) });
+      body: JSON.stringify({ from: env.EMAIL_FROM || 'Small Build Co <hello@smallbuild.com.au>', reply_to: 'hello@smallbuild.com.au', to: [to], subject, text }) });
+    if (!r.ok) console.log('email failed', r.status, (await r.text().catch(() => '')).slice(0, 200));
     return r.ok ? 'sent' : 'failed ' + r.status;
   } catch (e) { return 'failed'; }
 }
+/* Email the owner. The order never waits on it. */
+const emailOwner = (env, subject, text, al) => sendMail(env, env.NOTIFY_EMAIL || (al && al.email) || 'jonathan@binbypass.com', subject, text, al);
+/* Email check before any upload: a 6-digit code to the visitor, swapped for a pass that lets them upload. */
+const CODE_MS = 15 * 60e3, PASS_MS = 24 * 3600e3, EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+async function sha(t) { const d = await crypto.subtle.digest('SHA-256', enc.encode(t)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join(''); }
 /* ---------- Stripe: card holds through Checkout, captured when the owner accepts ----------
    Off until STRIPE_SECRET_KEY is set. Without it the site keeps its test-mode hold page and nothing is charged. */
 const stripeOn = (env) => !!env.STRIPE_SECRET_KEY;
@@ -494,16 +501,47 @@ async function handle(request, env) {
   }
 
   /* ----- customers ----- */
+  if (path === '/api/verify/start' && m === 'POST') {
+    const b = await body(), name = str(b.name, 80), email = str(b.email, 120).toLowerCase();
+    if (!name || !EMAIL_RE.test(email)) return fail(400, 'bad_form', 'Add your name and a working email address.');
+    if (!(await db.bump('vs:' + today + ':' + ip, 20)) || !(await db.bump('ve:' + today + ':' + email, 6))) return fail(429, 'cap', 'Too many codes asked for today. Try again tomorrow, or email hello@smallbuild.com.au.');
+    const al = await db.load('alerts');
+    await db.save('lead:' + email, { email, name, at: Date.now(), ip });
+    if (mailKey(env, al)) {
+      const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+      const sent = await sendMail(env, email, 'Your Small Build Co code: ' + code,
+        'Hi ' + name.split(' ')[0] + ',\n\nYour code is ' + code + '. Type it on the page to upload your plans. It works for 15 minutes.\n\nIf you did not ask for this, ignore this email.\n\nJono\nSmall Build Co, Ferny Hills\nsmallbuild.com.au\n', al);
+      if (sent === 'sent') { await db.save('vc:' + email, { h: await sha(email + ':' + code), exp: Date.now() + CODE_MS, tries: 0 }); return json({ need: true }); }
+      console.log('code email not sent, letting the visitor through', sent);
+    }
+    /* No working email service yet: the email is recorded and the visitor goes straight on. */
+    const pass = rid(24, 'abcdefghijklmnopqrstuvwxyz0123456789');
+    await db.save('vp:' + pass, { email, exp: Date.now() + PASS_MS, checked: false });
+    return json({ need: false, pass });
+  }
+  if (path === '/api/verify/check' && m === 'POST') {
+    const b = await body(), email = str(b.email, 120).toLowerCase(), code = str(b.code, 12).replace(/\D/g, '');
+    const v = await db.load('vc:' + email);
+    if (!v || Date.now() > v.exp) return fail(400, 'expired', 'That code has run out. Ask for a new one.');
+    if (v.tries >= 5) return fail(429, 'tries', 'Too many wrong codes. Ask for a new one.');
+    if (v.h !== (await sha(email + ':' + code))) { v.tries++; await db.save('vc:' + email, v); return fail(400, 'wrong', 'That code is not right. Check the email and try again.'); }
+    await db.save('vc:' + email, { ...v, exp: 0 });
+    const pass = rid(24, 'abcdefghijklmnopqrstuvwxyz0123456789');
+    await db.save('vp:' + pass, { email, exp: Date.now() + PASS_MS, checked: true });
+    return json({ pass });
+  }
   if (path === '/api/orders' && m === 'POST') {
     const b = await body();
     const name = str(b.name, 80), email = str(b.email, 120), addr = str(b.addr, 120);
-    if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !addr) return fail(400, 'bad_form', 'Name, email and street address are needed.');
+    if (!name || !EMAIL_RE.test(email) || !addr) return fail(400, 'bad_form', 'Name, email and street address are needed.');
+    const vp = await db.load('vp:' + str(b.pass, 40));
+    if (!vp || Date.now() > vp.exp || vp.email !== email.toLowerCase()) return fail(403, 'no_pass', 'Confirm your email first. Go back to the start and enter it again.');
     if (await capped('orders', 'DAILY_ORDER_CAP')) return fail(429, 'cap', ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
       name, email, addr, suburb: str(b.suburb, 60), notes: '',
       files: (Array.isArray(b.files) ? b.files : []).slice(0, 6).map((f) => ({ name: str(f && f.name, 120), size: +(f && f.size) || 0 })), 
-      status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '', pages: 0, images: 0, reads: 0, busy: 0 };
+      emailChecked: !!vp.checked, status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '', pages: 0, images: 0, reads: 0, busy: 0 };
     await db.save('o:' + o.id, o);
     return json({ order: publicView(o), key: o.key });
   }

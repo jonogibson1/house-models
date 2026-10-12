@@ -315,13 +315,49 @@ async function prep(files, prog){
   return { frag:images.map(function(b){ return IMG_PREFIX+b+'"}}'; }).join(','), manifest:manifest, text:lines.join('\n').slice(0,70000), pages:n };
 }
 
+/* ---------- email check before upload ---------- */
+var gate={ name:'', email:'', pass:'' };
+try{ var gs=JSON.parse(sessionStorage.getItem('sb-gate')||'null'); if(gs && gs.pass && gs.exp>Date.now()) gate=gs; }catch(e){}
+function gateSave(){ try{ gate.exp=Date.now()+20*3600e3; sessionStorage.setItem('sb-gate', JSON.stringify(gate)); }catch(e){} }
+function gateShow(step){
+  $('#f-gate').hidden=step!=='email'; $('#f-code').hidden=step!=='code'; $('#f-start').hidden=step!=='plans';
+  if(step==='plans') $('#who').textContent='Ordering as '+gate.name+', '+gate.email+'.';
+  if(step==='code'){ $('#code-to').textContent=gate.email; $('#in-code').value=''; setTimeout(function(){ $('#in-code').focus(); },50); }
+}
+gateShow(gate.pass?'plans':'email');
+if(/[?&]test=1/.test(location.search)) $('#test-tools').hidden=false;
+function gateErr(id,msg){ var e=$(id); e.textContent=msg||''; e.hidden=!msg; }
+function askCode(btn){
+  if(btn) btn.disabled=true;
+  return api('POST','/api/verify/start',{ name:gate.name, email:gate.email }).then(function(r){
+    if(btn) btn.disabled=false;
+    if(r.need) gateShow('code'); else { gate.pass=r.pass; gateSave(); gateShow('plans'); }
+  }, function(e){ if(btn) btn.disabled=false; gateErr($('#f-code').hidden?'#gate-err':'#code-err', e.message); });
+}
+$('#f-gate').addEventListener('submit',function(e){
+  e.preventDefault();
+  var n=$('#in-name').value.trim(), m=$('#in-email').value.trim().toLowerCase();
+  if(!n) return gateErr('#gate-err','Add your name.');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m)) return gateErr('#gate-err','Add a working email address. Your code goes there.');
+  gateErr('#gate-err',''); gate={ name:n, email:m, pass:'' }; askCode($('#gate-go'));
+});
+$('#f-code').addEventListener('submit',function(e){
+  e.preventDefault();
+  var c=$('#in-code').value.replace(/\D/g,'');
+  if(c.length!==6) return gateErr('#code-err','The code is 6 digits.');
+  gateErr('#code-err','');
+  api('POST','/api/verify/check',{ email:gate.email, code:c }).then(function(r){ gate.pass=r.pass; gateSave(); gateShow('plans'); toast('Email confirmed. Now add your plans.'); }, function(e){ gateErr('#code-err', e.message); });
+});
+$('#code-again').addEventListener('click',function(){ gateErr('#code-err',''); askCode(this).then(function(){ toast('A new code is on its way.'); }); });
+$('#code-back').addEventListener('click',function(){ gate={name:'',email:'',pass:''}; try{ sessionStorage.removeItem('sb-gate'); }catch(e){} gateShow('email'); });
+
 /* ---------- upload ---------- */
 var sampleF=null;
 if(window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc='/vendor/pdf.worker.min.js';
 function listFiles(files, ul){ ul.innerHTML = Array.prototype.map.call(files,function(f){ return '<li><span>'+esc(f.name)+'</span><span>'+kb(f.size)+'</span></li>'; }).join(''); }
 $('#in-plans').addEventListener('change',function(){ sampleF=null; listFiles(this.files,$('#list-plans')); });
 $('#fill-test').addEventListener('click',function(){
-  $('#in-name').value='Test Neighbour'; $('#in-email').value='neighbour@example.com'; $('#in-addr').value='1 Test Street';
+  $('#in-addr').value='1 Test Street'; $('#in-suburb').value='Ferny Hills';
   ['c1','c2','c3'].forEach(function(c){ $('#in-'+c).checked=true; });
   toast('Details filled in. Add your PDF plans, or use the sample plan set.');
 });
@@ -334,16 +370,15 @@ $('#use-sample').addEventListener('click',function(){
 $('#f-start').addEventListener('submit',function(e){
   e.preventDefault();
   var err=$('#start-err'), plans=sampleF ? [sampleF] : Array.prototype.slice.call($('#in-plans').files), msg='';
-  var f={ name:$('#in-name').value.trim(), email:$('#in-email').value.trim(), addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim() };
-  if(!f.name) msg='Add your name.';
-  else if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(f.email)) msg='Add an email address so Jono can reach you about your model.';
-  else if(!f.addr) msg='Add the street address of the house.';
+  var f={ name:gate.name, email:gate.email, pass:gate.pass, addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim() };
+  if(!gate.pass){ gateShow('email'); return; }
+  if(!f.addr) msg='Add the street address of the house.';
   else if(!plans.length) msg='Add your building plans as a PDF. The model is built from them.';
   else if(plans.some(function(x){ return !/\.pdf$/i.test(x.name); })) msg='Plans need to be PDF files.';
   else if(!$('#in-c1').checked||!$('#in-c2').checked||!$('#in-c3').checked) msg='Tick all three boxes to continue.';
   if(msg){ err.textContent=msg; err.hidden=false; return; }
   err.hidden=true;
-  this.reset(); $('#in-suburb').value='Ferny Hills'; $('#list-plans').innerHTML=''; sampleF=null;
+  this.reset(); $('#list-plans').innerHTML=''; sampleF=null;
   startOrder(f, plans);
 });
 function setPending(msg){ if(ui.pending){ ui.pending.msg=msg; var el=$('#read-msg'); if(el) el.textContent=msg; } }
@@ -361,7 +396,7 @@ async function startOrder(f, plans){
     id=made.order.id; remember(id, made.key); cur=made.order;
     memFrag[id]=JSON.stringify({manifest:pack.manifest,text:pack.text,pages:pack.pages})+'\n'+pack.frag; pack=null;
     await readNow(id);
-  }catch(e){ ui.pending=null; ui.err=e.message||'Something went wrong. Try again.'; renderOrder(); }
+  }catch(e){ ui.pending=null; ui.err=e.message||'Something went wrong. Try again.'; if(e.status===403){ gate.pass=''; try{ sessionStorage.removeItem('sb-gate'); }catch(x){} gateShow('email'); } renderOrder(); }
 }
 async function readNow(id){
   if(!ui.pending) ui.pending={ addr:cur?cur.addr:'', msg:'' };

@@ -254,7 +254,7 @@ footer{margin-top:64px}
         <p class="lede">A white 1:100 model of your home and lot, like an architect's model, made from your own building plans: the brick and cladding, every window and door, the roof, the driveway, the garden and the fences. Pick it up, turn it around, put it on the shelf, and see the place you worked for from every side.</p>
         <div class="row">
           <button class="btn" data-go="start">See your house as a model</button>
-          <span class="muted small">Free preview. No card needed.</span>
+          <span class="muted small">Free preview. Just your email, no card.</span>
         </div>
       </div>
       <figure class="fig stagebox">
@@ -290,8 +290,8 @@ footer{margin-top:64px}
       <div class="body">
         <h2>From plans to shelf in four steps</h2>
       <ol class="steps">
-        <li><h3>Upload your plans</h3><p>The PDF plans from your builder or architect. A floor plan and elevations are enough. It takes two minutes.</p></li>
-        <li><h3>See your house</h3><p>Your plans are read, checked a second time and modelled automatically, usually within ten minutes: finishes, windows, doors, roof and landscaping. Spin the preview around on screen. Looking costs nothing.</p></li>
+        <li><h3>Upload your plans</h3><p>Enter your email, then upload the PDF plans from your builder or architect. A floor plan and elevations are enough. It takes two minutes.</p></li>
+        <li><h3>See your house</h3><p>Your plans are read, checked a second time and modelled automatically, usually in about ten minutes: finishes, windows, doors, roof and landscaping. Spin the preview around on screen. Looking costs nothing.</p></li>
         <li><h3>Say yes when it looks right</h3><p>Go ahead, or ask for changes if something is off. One free set of changes is included. Your card is held when you order. I review every order within 24 hours and it is only charged once I confirm I can make it.</p></li>
         <li><h3>Hold it</h3><p>Printed at 1:100 in white in Ferny Hills, like an architect's model. Pick it up for free, or it comes to your door by Australia Post.</p></li>
       </ol>
@@ -326,10 +326,15 @@ footer{margin-top:64px}
     <div class="sec">
       <span class="num">04</span>
       <div class="body">
-        <h2>Building something bigger?</h2>
+        <h2>Building your project</h2>
       <div class="twocol">
-        <div class="stack tight"><p>I also make models for builders, developers and project teams: townhouse rows, school buildings, halls and commercial jobs, from DA or construction drawings or a site survey. Usually 1:100 to 1:250 so the whole site fits on the plate, with the ground levels, retaining walls and fences that are drawn.</p></div>
-        <div class="stack tight"><p class="muted">Good for client handovers, display suites, community consultation and the site office. Send the drawings to <span class="mono">hello@smallbuild.com.au</span> and I'll come back with a scale, a size and a price.</p><div class="row"><button class="btn ghost sm" data-go="models">See recent models</button></div></div>
+        <div class="stack tight"><p>I make models for builders and developers from DA or construction drawings or a site survey: single homes, townhouse rows, halls and commercial jobs. Usually 1:100 to 1:250, so the whole site fits on one plate with the ground levels, retaining walls and fences that are drawn.</p>
+          <p class="muted">Send the drawings to <span class="mono">hello@smallbuild.com.au</span> and I'll come back with a scale, a size and a price.</p><div class="row"><button class="btn ghost sm" data-go="models">See recent models</button></div></div>
+        <div class="stack tight">
+          <div class="stack tight"><h3>Win the tender</h3><p class="muted">Put a model of the client's project on the table at the interview. It shows you have read the drawings and thought through how the site goes together before you have the job.</p></div>
+          <div class="stack tight"><h3>Hand over more than keys</h3><p class="muted">Give your client a model of their new home at handover, with your company name on the plinth. It is a gift that cements the relationship and the next job.</p></div>
+          <div class="stack tight"><h3>Marketing that stays on display</h3><p class="muted">Brochures get thrown out. A model of someone's home sits on their shelf for years, and every visitor who picks it up sees who built it.</p></div>
+        </div>
       </div>
       </div>
     </div>
@@ -388,7 +393,7 @@ footer{margin-top:64px}
     </div>
 
     <div class="band cta-band">
-      <div class="stack tight"><h2>See your house before you decide</h2><p>Upload your plans and turn your home around on screen. It is free to look, and no card is needed until you order.</p></div>
+      <div class="stack tight"><h2>See your house before you decide</h2><p>Upload your plans and turn your home around on screen. It is free to look. All you need is your email until you decide to order.</p></div>
       <button class="btn light" data-go="start">See your house as a model</button>
     </div>
   </section>
@@ -397,16 +402,27 @@ footer{margin-top:64px}
     <div class="stack" style="max-width:720px">
       <span class="eyebrow">Step 1 of 4</span>
       <h2>Let's see your house</h2>
-      <p class="muted">Upload your plans and your 3D preview is ready within minutes. Looking is free. You only pay if you decide to order.</p>
+      <p class="muted">Start with your email. I send you a 6-digit code to check it is really you, then you upload your plans and your 3D preview is ready in about ten minutes. Looking is free. You only pay if you decide to order.</p>
       <div class="note warn" id="not-ready" hidden><b>Heads up:</b> plan reading is not switched on yet, so an upload will not produce a preview. Jono is still setting the site up.</div>
-      <form id="f-start" class="stack" novalidate>
+      <form id="f-gate" class="stack" novalidate>
         <div class="grid2">
           <div class="field"><label for="in-name">Your name</label><input type="text" id="in-name" autocomplete="name"></div>
           <div class="field"><label for="in-email">Email</label><input type="email" id="in-email" autocomplete="email"></div>
         </div>
+        <p class="err" id="gate-err" role="alert" hidden></p>
+        <div class="row"><button class="btn" type="submit" id="gate-go">Email me a code</button></div>
+      </form>
+      <form id="f-code" class="stack" novalidate hidden>
+        <p>A 6-digit code is on its way to <b id="code-to"></b>. It can take a minute, and it may land in junk mail.</p>
+        <div class="field" style="max-width:220px"><label for="in-code">Code</label><input type="text" id="in-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" class="mono"></div>
+        <p class="err" id="code-err" role="alert" hidden></p>
+        <div class="row"><button class="btn" type="submit">Check code</button><button class="btn ghost sm" type="button" id="code-again">Send a new code</button><button class="btn ghost sm" type="button" id="code-back">Use a different email</button></div>
+      </form>
+      <form id="f-start" class="stack" novalidate hidden>
+        <p class="muted small" id="who"></p>
         <div class="grid2">
           <div class="field"><label for="in-addr">Street address of the house</label><input type="text" id="in-addr" autocomplete="street-address"></div>
-          <div class="field"><label for="in-suburb">Suburb</label><input type="text" id="in-suburb" value="Ferny Hills"></div>
+          <div class="field"><label for="in-suburb">Suburb</label><input type="text" id="in-suburb" autocomplete="address-level2"></div>
         </div>
         <div class="drop">
           <label for="in-plans">Building plans (PDF)</label>
@@ -419,10 +435,10 @@ footer{margin-top:64px}
           <label class="check"><input type="checkbox" id="in-c2"><span>I am allowed to use these plans for a model. If a designer or builder drew them, I have checked with them.</span></label>
           <label class="check"><input type="checkbox" id="in-c3"><span>I understand the model is a simplified outside view and small details will differ.</span></label>
         </div>
-        <p class="muted small">What happens to your plans: the PDF is opened in your browser and stays there. Pictures of its pages and the text on them are sent to this site and to Claude, the AI model from Anthropic that reads them. The pictures are not stored here. Your name, email, address and the finished model are stored so you and Jono can see the order.</p>
+        <p class="muted small">What happens to your plans: the PDF is opened in your browser and stays there. Pictures of its pages and the text on them are sent to this site and to Claude, the AI model from Anthropic that reads them. The pictures are not stored here. Your name, email, address and the finished model are stored so you and Jono can see the order. Your email is only used for this order.</p>
         <p class="err" id="start-err" role="alert" hidden></p>
         <div class="row"><button class="btn" type="submit">Show me my house</button></div>
-        <div class="note quiet stack tight"><span><b>Testing?</b> These two buttons are for the test site only.</span><div class="row"><button class="btn ghost sm" type="button" id="fill-test">Fill with test details</button><button class="btn ghost sm" type="button" id="use-sample">Use the sample plan set</button></div></div>
+        <div class="note quiet stack tight" id="test-tools" hidden><span><b>Testing?</b> These two buttons are for testing only.</span><div class="row"><button class="btn ghost sm" type="button" id="fill-test">Fill with test details</button><button class="btn ghost sm" type="button" id="use-sample">Use the sample plan set</button></div></div>
       </form>
     </div>
   </section>
