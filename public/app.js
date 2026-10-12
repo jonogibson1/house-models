@@ -224,19 +224,19 @@ function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   var flat=!(+p.perGram>0) && +p.fee<=+p.min;
   $('#price-print').textContent=(flat?'':'From ')+money(p.min);
-  $('#price-print-note').textContent=(flat?'One price for any home that fits the printer at 1:100 or 1:150, with the lot and landscaping. ':'Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. ')+'You see your model with your preview, before you commit to anything. Pickup is free. Postage is Australia Post at cost, '+money2(sh.cost)+' for the sample home.';
+  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for the sample.';
   $$('.from-word').forEach(function(el){ el.textContent=flat?'':'from '; });
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
   var tr=built(treeOf(SAMPLE),0.8);
-  $('#price-tree-note').textContent='Your house again at about 1:'+tr.scale+', small enough to hang on the tree: the sample is '+Math.round(tr.size[0])+' mm across. Comes with a ribbon through the roof. Same preview, same hold, same pickup or post.';
+  $('#price-tree-note').textContent='Your house at about 1:'+tr.scale+', '+Math.round(tr.size[0])+' mm across, with a ribbon to hang it.';
   var heroTree = home.tree;
   $$('[data-hero]').forEach(function(b){ b.setAttribute('aria-pressed', String((b.getAttribute('data-hero')==='tree')===heroTree)); });
   $$('.from-price').forEach(function(el){ el.textContent=money(p.min); });
   // the about photo goes in #about-pic in index.html; nothing is drawn here so it is never overwritten
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
-  $('#hero-cap').textContent = heroTree ? 'The Christmas tree version of the same home, about 1:'+tr.scale+'. The can is a standard 375 ml drink can. Drag to turn it.'
-    : 'A sample single-storey home at 1:'+r.scale+'. The can is a standard 375 ml drink can. One white piece, like an architect\'s model: framed windows and doors, weatherboard lines, the alfresco on its posts, the driveway, garden beds and fences, and the address on the plinth. Drag to turn it.';
+  $('#hero-cap').textContent = heroTree ? 'Christmas tree version, about 1:'+tr.scale+'. The can is 375 ml. Drag to turn.'
+    : 'Sample house at 1:'+r.scale+'. The can is 375 ml. Drag to turn.';
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
@@ -346,7 +346,7 @@ $('#f-code').addEventListener('submit',function(e){
   var c=$('#in-code').value.replace(/\D/g,'');
   if(c.length!==6) return gateErr('#code-err','The code is 6 digits.');
   gateErr('#code-err','');
-  api('POST','/api/verify/check',{ email:gate.email, code:c }).then(function(r){ gate.pass=r.pass; gateSave(); gateShow('plans'); toast('Email confirmed. Now add your plans.'); }, function(e){ gateErr('#code-err', e.message); });
+  api('POST','/api/verify/check',{ email:gate.email, code:c }).then(function(r){ gate.pass=r.pass; gateSave(); gateShow('plans'); toast('Email confirmed.'); }, function(e){ gateErr('#code-err', e.message); });
 });
 $('#code-again').addEventListener('click',function(){ gateErr('#code-err',''); askCode(this).then(function(){ toast('A new code is on its way.'); }); });
 $('#code-back').addEventListener('click',function(){ gate={name:'',email:'',pass:''}; try{ sessionStorage.removeItem('sb-gate'); }catch(e){} gateShow('email'); });
@@ -364,7 +364,7 @@ $('#fill-test').addEventListener('click',function(){
 $('#use-sample').addEventListener('click',function(){
   fetch('/sample-house-plans.pdf').then(function(r){ if(!r.ok) throw 0; return r.blob(); }).then(function(b){
     sampleF=new File([b],'sample-house-plans.pdf',{type:'application/pdf'}); $('#in-plans').value=''; listFiles([sampleF],$('#list-plans'));
-    toast('Sample plan set attached: floor plan, elevations and roof plan of a made-up house.');
+    toast('Sample plans attached.');
   }, function(){ toast('The sample plans could not be loaded. Try again.'); });
 });
 $('#f-start').addEventListener('submit',function(e){
@@ -401,7 +401,7 @@ async function startOrder(f, plans){
 async function readNow(id){
   if(!ui.pending) ui.pending={ addr:cur?cur.addr:'', msg:'' };
   ui.err=''; renderOrder();
-  setPending('Reading your plans and working out the house. Your plans are read, then checked a second time against the drawings. This usually takes five to eight minutes. Keep this page open.');
+  setPending('Reading your plans. This takes about ten minutes. Keep this page open.');
   try{
     var res=await api('POST', opath(id,'/read'), memFrag[id]||'', true);
     cur=res.order; ui.pending=null; renderOrder();
@@ -473,12 +473,12 @@ function showOrder(){
 function renderOrder(){
   var root=$('#order-root'), o=cur, h='';
   if(ui.pending){
-    root.innerHTML='<div class="stack" style="max-width:640px"><span class="eyebrow">Step 1 of 4</span><h2>Building your house</h2><div class="row" style="flex-wrap:nowrap;align-items:flex-start"><span class="spin" aria-hidden="true"></span><p id="read-msg" role="status">'+esc(ui.pending.msg)+'</p></div>'
-      +'<p class="muted small">Keep this page open. Your preview appears here as soon as it is ready.</p></div>';
+    root.innerHTML='<div class="stack" style="max-width:640px"><span class="eyebrow">Step 1 of 4</span><h2>Reading your plans</h2><div class="row" style="flex-wrap:nowrap;align-items:flex-start"><span class="spin" aria-hidden="true"></span><p id="read-msg" role="status">'+esc(ui.pending.msg)+'</p></div>'
+      +'<p class="muted small">Your preview appears here when it\'s ready.</p></div>';
     return;
   }
   if(!o){
-    root.innerHTML='<div class="stack" style="max-width:640px">'+(ui.err?'<div class="note bad">'+esc(ui.err)+'</div>':'')+'<h2>Your house will appear here</h2><p class="muted">Upload your plans and your 3D preview shows up on this page, followed by each step after it.</p><div class="row"><button class="btn" data-go="start">See your house as a model</button></div></div>';
+    root.innerHTML='<div class="stack" style="max-width:640px">'+(ui.err?'<div class="note bad">'+esc(ui.err)+'</div>':'')+'<h2>No order yet</h2><p class="muted">Upload your plans and your preview shows up here.</p><div class="row"><button class="btn" data-go="start">Upload plans</button></div></div>';
     return;
   }
   var link=copyBox('my-link','Your order link. Save it to come back on any device.',orderLink(o.id,keyOf(o.id)));
@@ -521,38 +521,38 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Here is your house</h3><p class="muted">Turn it around. This is your house and lot as the printed model will have them, built from your plans.</p>'+facts(o,ch)
-     +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>What was assumed from your plans</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
-     +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>What was checked'+(o.ai.reviewed?' in the second review':'')+'</summary>'+ulist(o.ai.checks)+'</details>':'')
-     +(ui.busy==='revise'?'<div class="row" style="flex-wrap:nowrap"><span class="spin" aria-hidden="true"></span><span>Working your changes into the model. This usually takes a minute or two.</span></div>'
-       :!o.revUsed&&ui.step!=='go'&&ui.step!=='change'?'<div class="note quiet stack tight" id="decide"><b>Would you like to go ahead with this model, or would you like any changes?</b><span class="small">One free set of changes is included. List everything you want changed in one go, and the model is updated before you decide.</span><div class="row"><button class="btn" id="go-ahead">Yes, go ahead</button><button class="btn ghost" id="want-change">I would like changes</button></div></div>'
-       :!o.revUsed&&ui.step==='change'?'<div class="stack tight" id="change-box"><h3>What would you like changed?</h3><label for="rev-note" class="small">List every change in one message. This is your one free set of changes.</label><textarea id="rev-note" placeholder="For example: the garage has a hip roof like the rest of the house. The front path is 1.2 m wide."></textarea><div class="row"><button class="btn" id="rev-send">Send my changes</button><button class="btn ghost" id="change-back">Back</button></div></div>'
-       :(o.revUsed?'<p class="muted small">Your free set of changes has been made. Would you like to go ahead with this model?</p>':'')
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Your preview</h3><p class="muted">This is the model as it will be printed.</p>'+facts(o,ch)
+     +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>Assumptions</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
+     +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>Checks</summary>'+ulist(o.ai.checks)+'</details>':'')
+     +(ui.busy==='revise'?'<div class="row" style="flex-wrap:nowrap"><span class="spin" aria-hidden="true"></span><span>Making your changes. Takes a minute or two.</span></div>'
+       :!o.revUsed&&ui.step!=='go'&&ui.step!=='change'?'<div class="note quiet stack tight" id="decide"><b>Order it, or ask for changes?</b><span class="small">One round of changes is free. List everything in one message.</span><div class="row"><button class="btn" id="go-ahead">Order</button><button class="btn ghost" id="want-change">Ask for changes</button></div></div>'
+       :!o.revUsed&&ui.step==='change'?'<div class="stack tight" id="change-box"><h3>Changes</h3><label for="rev-note" class="small">List everything in one message. You get one round.</label><textarea id="rev-note" placeholder="e.g. The garage roof is hipped. The front path is 1.2 m wide."></textarea><div class="row"><button class="btn" id="rev-send">Send changes</button><button class="btn ghost" id="change-back">Back</button></div></div>'
+       :(o.revUsed?'<p class="muted small">Your changes are in.</p>':'')
         +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
-     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">Printed in white at 1:'+q.scale+' with everything on your plans. Yours to keep.</span></label>'
-     +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">Your house, '+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon to hang it.</span></label>':'')
-     +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports needed.</span></label></div>'
+     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">White, 1:'+q.scale+'.</span></label>'
+     +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">'+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon.</span></label>':'')
+     +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
-     +'<label><input type="radio" name="dv" id="dv-pickup" value="pickup"'+(dv==='pickup'?' checked':'')+'><span class="lab">Pickup, Ferny Hills</span><span class="price">Free</span><span class="muted small">Jono messages you a time.</span></label>'
+     +'<label><input type="radio" name="dv" id="dv-pickup" value="pickup"'+(dv==='pickup'?' checked':'')+'><span class="lab">Pickup, Ferny Hills</span><span class="price">Free</span><span class="muted small">I\'ll message you a time.</span></label>'
      +'<label><input type="radio" name="dv" id="dv-post" value="post"'+(dv==='post'?' checked':'')+'><span class="lab">Australia Post</span><span class="price">'+money2(sh.cost)+'</span><span class="muted small">Parcel Post. Box about '+sh.box.join(' x ')+' mm, charged as '+(sh.kg<1?Math.ceil(sh.kg*1000)+' g':sh.kg.toFixed(2)+' kg')+'.</span></label></div>'
-     +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Nothing is charged until Jono confirms.</span></div>')
-     +((!o.revUsed&&ui.step==='go')?'<p class="small"><button class="btn ghost sm" id="go-back">Back: I would like changes instead</button></p>':'');
+     +'<div class="row"><button class="btn" id="to-pay">Order this model</button><span class="muted small">Card held, charged when I confirm.</span></div>')
+     +((!o.revUsed&&ui.step==='go')?'<p class="small"><button class="btn ghost sm" id="go-back">Ask for changes instead</button></p>':'');
   } else if(o.status==='paying'){
-    right='<span class="eyebrow">Step 3 of 4</span><h3>Payment not finished</h3><p class="muted">Your card hold has not gone through yet. If you have just paid, this page updates in a few seconds.</p>'
-     +'<div class="row">'+(o.payUrl?'<a class="btn" href="'+esc(o.payUrl)+'">Continue to secure payment</a>':'')+'<button class="btn ghost" id="unpay">Back to preview</button></div>'+timeline(o);
+    right='<span class="eyebrow">Step 3 of 4</span><h3>Payment not finished</h3><p class="muted">The card hold hasn\'t gone through. If you\'ve just paid, this page updates in a few seconds.</p>'
+     +'<div class="row">'+(o.payUrl?'<a class="btn" href="'+esc(o.payUrl)+'">Go to payment</a>':'')+'<button class="btn ghost" id="unpay">Back to preview</button></div>'+timeline(o);
   } else if(o.status==='hold_placed'){
-    right='<h3>Hold placed. Waiting on Jono.</h3><p class="muted">A hold of '+money2(o.total)+' is on your card. Jono reviews it and confirms by <b>'+when(o.holdAt+24*3600e3)+'</b>. If he doesn\'t, the hold is released by itself and nothing is charged.</p>'+timeline(o)
-     +'<p class="muted small">This page updates by itself when he confirms.</p>';
+    right='<h3>Hold placed</h3><p class="muted">'+money2(o.total)+' is held on your card. I confirm by <b>'+when(o.holdAt+24*3600e3)+'</b>. If I don\'t, the hold is released and nothing is charged.</p>'+timeline(o)
+     +'<p class="muted small">This page updates when I confirm.</p>';
   } else if(o.status==='lapsed'){
-    right='<h3>The hold has lapsed</h3><div class="note bad">Jono did not confirm within 24 hours, so the hold on your card has been released and nothing was charged. Reply to your confirmation or upload again to start over.</div>';
+    right='<h3>Hold released</h3><div class="note bad">I didn\'t confirm within 24 hours, so nothing was charged. Email hello@smallbuild.com.au or upload again.</div>';
   } else if(o.status==='declined'){
-    right='<h3>Sorry, I can\'t make this one</h3><div class="note bad">'+esc(o.declineReason||'Jono could not take this job on.')+' The hold on your card has been released and nothing was charged.</div>';
+    right='<h3>I can\'t make this one</h3><div class="note bad">'+esc(o.declineReason||'I can\'t take this job on.')+' The hold is released. Nothing was charged.</div>';
   } else {
-    var tst=o.carded?'':' (test)'; var msg={accepted:'Confirmed. Your card has been charged '+money2(o.total)+tst+'.',printing:'Your model is on the printer.',ready:(o.delivery==='post'?'Your model has been posted with Australia Post.':'Your model is ready. Pickup from Ferny Hills. Jono will message you the address and a time.'),collected:'Collected. Enjoy it.',delivered:'Confirmed and charged '+money2(o.total)+tst+'. Your files are ready.'}[o.status];
+    var tst=o.carded?'':' (test)'; var msg={accepted:'Confirmed. Your card has been charged '+money2(o.total)+tst+'.',printing:'Your model is on the printer.',ready:(o.delivery==='post'?'Your model has been posted with Australia Post.':'Ready for pickup in Ferny Hills. I\'ll message you the address and a time.'),collected:'Collected.',delivered:'Confirmed and charged '+money2(o.total)+tst+'. Your files are ready.'}[o.status];
     right='<h3>'+(o.status==='ready'?(o.delivery==='post'?'Posted':'Ready for pickup'):o.status==='delivered'?'Your files are ready':'Confirmed')+'</h3><p>'+msg+'</p>'+timeline(o)
      +(o.status==='delivered'?'<div class="row"><button class="btn" id="cust-dl">Download STL files (zip)</button></div>':'');
   }
-  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn it, scroll to zoom. The can beside it is a standard 375 ml drink can, for size.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off once your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
+  h=head+'<div class="split" style="margin-top:22px"><div class="stagebox"><div class="stage" id="stage-order"></div><span class="cap">Drag to turn, scroll to zoom. The can is a 375 ml drink can, for scale.'+(['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0?' The PREVIEW mark comes off when your order is confirmed.':'')+'</span></div><div class="stack">'+right+link+'</div></div>';
   root.innerHTML=h;
   var v=viewer('order'); v.mount($('#stage-order'),{watermark:['accepted','printing','ready','collected','delivered'].indexOf(o.status)<0}); v.set(r);
   var up=$('#unpay'); if(up) up.addEventListener('click',function(){ up.disabled=true; ui.busy='unpay'; api('POST', opath(o.id,'/unpay'), {}).then(function(res){ cur=res.order; ui.busy=''; renderOrder(); }, function(e){ ui.busy=''; up.disabled=false; toast(e.message); }); });
