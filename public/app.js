@@ -50,7 +50,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:300,fee:300,perGram:0,stl:30,tree:60}, ready:true };
+var cfg = { pricing:{min:500,fee:500,perGram:0,stl:30,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };

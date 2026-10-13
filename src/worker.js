@@ -5,7 +5,7 @@ import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
 const G = globalThis.HouseGen;
-const DEFAULT_PRICING = { min: 300, fee: 300, perGram: 0, stl: 30, tree: 60 };   // printed model: one price, A$300
+const DEFAULT_PRICING = { min: 500, fee: 500, perGram: 0, stl: 30, tree: 60 };   // printed model: one price, A$500
 const REVIEW_MS = 24 * 3600e3;
 /* The model builder version an accepted order is frozen to. public/kit/<KIT_VERSION>.js must be a copy of public/kit.js;
    when kit.js changes, bump this and add the new copy, so accepted orders keep printing exactly what the customer approved. */
