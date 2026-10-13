@@ -181,6 +181,16 @@ Viewer.prototype.draw=function(){
   this.cam.position.set(Math.sin(this.az)*Math.cos(this.el)*d, Math.sin(this.el)*d+t, Math.cos(this.az)*Math.cos(this.el)*d);
   this.cam.lookAt(0,t,0); this.r.render(this.scene,this.cam);
 };
+/* Ferny Hills model shown on the home page; gallery.js uses the same parser. */
+window.parseSTL=function(buf){
+  var dv=new DataView(buf), n=dv.getUint32(80,true), tris=new Float32Array(n*9), o=84, k=0;
+  var mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+  for(var i=0;i<n;i++){ o+=12; for(var j=0;j<9;j++){ var v=dv.getFloat32(o,true); o+=4; tris[k++]=v; var a=j%3; if(v<mn[a]) mn[a]=v; if(v>mx[a]) mx[a]=v; } o+=2; }
+  for(var q=0;q<tris.length;q+=3){ tris[q]-=mn[0]; tris[q+1]-=mn[1]; tris[q+2]-=mn[2]; }
+  return { size:[mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]], parts:[{ tris:tris, z0:0, kind:'model' }] };
+};
+var HERO_STL=null;
+function heroModel(){ if(!HERO_STL) HERO_STL=fetch('/models/ferny-hills.stl').then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); }).then(window.parseSTL); return HERO_STL; }
 var V = { hero:null, order:null, queue:null };
 var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherboard:'#dcdfd8', vertical:'#cfc6b4', stone:'#b4a58c', glass:'#2c3a44', door:'#6d5a48', post:'#efe9de',
   base:'#34383b', turf:'#5f7f45', garden:'#6b4f36', mulch:'#7a5a3a', pebbles:'#c3bdb2', concrete:'#bdbbb5', driveway:'#a8a6a0', path:'#d3cdc1', paving:'#c9bfae',
@@ -224,7 +234,7 @@ function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   var flat=!(+p.perGram>0) && +p.fee<=+p.min;
   $('#price-print').textContent=(flat?'':'From ')+money(p.min);
-  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. The sample above, a 19 metre single-storey home on its 32 metre lot with the landscaping, is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for the sample.';
+  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. A 19 metre single-storey home on a 32 metre lot with the landscaping is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for that size.';
   $$('.from-word').forEach(function(el){ el.textContent=flat?'':'from '; });
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
@@ -234,9 +244,12 @@ function renderHome(){
   $$('[data-hero]').forEach(function(b){ b.setAttribute('aria-pressed', String((b.getAttribute('data-hero')==='tree')===heroTree)); });
   $$('.from-price').forEach(function(el){ el.textContent=money(p.min); });
   // the about photo goes in #about-pic in index.html; nothing is drawn here so it is never overwritten
-  var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero')); v.set(heroTree?tr:r);
-  $('#hero-cap').textContent = heroTree ? 'Christmas tree version, about 1:'+tr.scale+'. The can is 375 ml. Drag to turn.'
-    : 'Sample house at 1:'+r.scale+'. The can is 375 ml. Drag to turn.';
+  var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero'));
+  if(heroTree){ v.set(tr); $('#hero-cap').textContent='Christmas tree version, about 1:'+tr.scale+'. The can is 375 ml. Drag to turn.'; }
+  else {
+    $('#hero-cap').textContent='Ferny Hills house at 1:75. The can is 375 ml. Drag to turn.';
+    heroModel().then(function(m){ if(!home.tree) v.set(m); }, function(){ HERO_STL=null; if(!home.tree) v.set(r); $('#hero-cap').textContent='Sample house at 1:'+r.scale+'. The can is 375 ml. Drag to turn.'; });
+  }
 }
 
 /* ---------- turning the PDF into pages Claude can read ---------- */
