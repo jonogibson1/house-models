@@ -234,7 +234,7 @@ function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
   var flat=!(+p.perGram>0) && +p.fee<=+p.min;
   $('#price-print').textContent=(flat?'':'From ')+money(p.min);
-  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. A 19 metre single-storey home on a 32 metre lot with the landscaping is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for that size.';
+  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. A 19 metre single-storey home on a 32 metre lot with the landscaping is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for a typical house.';
   $$('.from-word').forEach(function(el){ el.textContent=flat?'':'from '; });
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
