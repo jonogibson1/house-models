@@ -1,6 +1,6 @@
 [
-  {"id":"ferny-hills","name":"Ferny Hills house","place":"Ferny Hills, Brisbane","scale":"1:75","size":[318.8,300.0,138.3],"file":"/models/ferny-hills.stl",
-   "note":"Highset weatherboard house on a sloping block. Built from the listing floor plan, Queensland Government LiDAR ground levels and photos of the house."},
-  {"id":"mitchelton","name":"Mitchelton house","place":"Mitchelton, Brisbane","scale":"1:150","size":[280.2,117.9,51.3],"file":"/models/mitchelton.stl",
-   "note":"Post-war weatherboard house with a tiled hip roof, lattice entry porch, sunken back courtyard and fences. Ground, walls and roof levels from a detail and level survey; street side from a photo."}
+  {"id": "hendra", "name": "Hendra house", "place": "Hendra, Brisbane", "scale": "1:100", "size": [258.0, 252.5, 91.3], "file": "/models/hendra.stl", "note": "New house with a carport, front porch, balcony and rear alfresco, a picket front fence and batten gates. Modelled from the architectural drawings and site survey."},
+  {"id": "bardon", "name": "Bardon house", "place": "Bardon, Brisbane", "scale": "1:100", "size": [329.0, 309.0, 114.0], "file": "/models/bardon.stl", "note": "Large hillside house with wide roof overhangs and a pool, on terraced ground. Modelled from the architectural drawings, cropped to the house and set at 30 degrees to fit the printer."},
+  {"id": "ferny-hills", "name": "Ferny Hills house", "place": "Ferny Hills, Brisbane", "scale": "1:75", "size": [318.8, 300.0, 138.3], "file": "/models/ferny-hills.stl", "note": "Highset weatherboard house on a sloping block. Built from the listing floor plan, Queensland Government LiDAR ground levels and photos of the house."},
+  {"id": "mitchelton", "name": "Mitchelton house", "place": "Mitchelton, Brisbane", "scale": "1:150", "size": [280.2, 117.9, 51.3], "file": "/models/mitchelton.stl", "note": "Post-war weatherboard house with a tiled hip roof, lattice entry porch, sunken back courtyard and fences. Ground, walls and roof levels from a detail and level survey; street side from a photo."}
 ]
