@@ -124,7 +124,7 @@ function shipFor(r){
 }
 
 var STATUS = { received:['Plans received','att'], revision:['Change requested','att'], unreadable:['Could not read','bad'], preview:['Preview sent',''], paying:['At payment',''], hold_placed:['Needs your OK','att'],
-  accepted:['Confirmed, paid','ok'], printing:['Printing','ok'], ready:['Ready','ok'], collected:['Collected',''], delivered:['File sent','ok'], declined:['Declined','bad'], lapsed:['Hold lapsed','bad'] };
+  accepted:['Confirmed, paid','ok'], printing:['Printing','ok'], ready:['Ready','ok'], collected:['Collected',''], delivered:['File sent','ok'], declined:['Declined','bad'], lapsed:['Hold lapsed','bad'], closed:['Closed','bad'] };
 function pill(o){ var s=STATUS[o.status]||['?','']; var t=s[0]; if(o.status==='ready') t=o.delivery==='post'?'Posted':'Ready for pickup'; if(o.status==='received' && o.aiErr) t='Read failed'; return '<span class="pill '+s[1]+'">'+t+'</span>'; }
 
 /* ---------- 3D viewer ---------- */
@@ -442,7 +442,7 @@ async function readNow(id){
 function timeline(o){
   var steps = o.choice==='stl' ? ['Plans received','Preview ready','Card hold placed','Confirmed and charged','File sent']
     : ['Plans received','Preview ready','Card hold placed','Confirmed and charged','Printing', o.delivery==='post'?'Posted':'Ready for pickup'];
-  var at = {received:0,revision:0,unreadable:0,preview:1,paying:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2,lapsed:2}[o.status];
+  var at = {received:0,revision:0,unreadable:0,preview:1,paying:1,hold_placed:2,accepted:3,printing:4,ready:5,collected:5,delivered:4,declined:2,lapsed:2,closed:0}[o.status];
   var fin = o.status==='collected'||o.status==='delivered'||o.status==='ready';
   return '<ol class="tl">'+steps.map(function(s,i){ return '<li class="'+(i<at||(fin&&i===at)?'done':i===at?'now':'')+'">'+s+'</li>'; }).join('')+'</ol>';
 }
@@ -516,8 +516,8 @@ function renderOrder(){
     var body;
     var again = memFrag[o.id]!==undefined ? '<button class="btn ghost" id="read-go">Try reading again</button>' : '';
     if(o.status==='unreadable'){
-      var pr=(o.ai&&o.ai.problems.length)?o.ai.problems:['The plans did not show enough to work out the shape of the house.'];
-      body='<h3>I couldn\'t read these plans well enough</h3><div class="note bad">'+ulist(pr)+'</div><p class="muted">A floor plan with overall dimensions and at least two elevations usually does it.</p><div class="row">'+again+'<button class="btn" data-go="start">Upload different plans</button></div>';
+      var pr=o.asked?(o.asked.need||[]).concat(o.asked.note?[o.asked.note]:[]):(o.ai&&o.ai.problems.length)?o.ai.problems:['The plans did not show enough to work out the shape of the house.'];
+      body='<h3>'+(o.asked?'I need better plans':'I couldn\'t read these plans well enough')+'</h3>'+(o.asked?'<p class="muted">I\'ve looked at your plans myself. To make a good model I need:</p>':'')+'<div class="note bad">'+ulist(pr)+'</div><p class="muted small">Nothing has been charged. You can also email the PDFs to hello@smallbuild.com.au.</p><p class="muted">A floor plan with overall dimensions and at least two elevations usually does it.</p><div class="row">'+again+'<button class="btn" data-go="start">Upload different plans</button></div>';
     } else {
       body='<h3>That didn\'t go through</h3><div class="note bad">'+esc(ui.err||o.aiErr||'The read did not finish. The page may have been closed part way through.')+'</div><div class="row">'+(again?again.replace('btn ghost','btn'):'')+'<button class="btn'+(again?' ghost':'')+'" data-go="start">Upload plans again</button></div>';
     }
@@ -573,6 +573,8 @@ function renderOrder(){
   } else if(o.status==='hold_placed'){
     right='<h3>Hold placed</h3><p class="muted">'+money2(o.total)+' is held on your card. I confirm by <b>'+when(o.holdAt+24*3600e3)+'</b>. If I don\'t, the hold is released and nothing is charged.</p>'+timeline(o)
      +'<p class="muted small">This page updates when I confirm.</p>';
+  } else if(o.status==='closed'){
+    right='<h3>I can\'t make this one</h3><div class="note bad">'+esc(o.closeReason||'I can\'t make a good model from these plans.')+' Nothing was charged.</div><p class="muted small">Have other drawings? Email hello@smallbuild.com.au.</p>';
   } else if(o.status==='lapsed'){
     right='<h3>Hold released</h3><div class="note bad">I didn\'t confirm within 24 hours, so nothing was charged. Email hello@smallbuild.com.au or upload again.</div>';
   } else if(o.status==='declined'){
@@ -640,6 +642,21 @@ function estTable(q){
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Size</dt><dd>'+q.size.map(function(v){return (+v).toFixed(1);}).join(' x ')+' mm</dd><dt>Parts</dt><dd>'+q.parts.length+' ('+q.parts.map(function(p){return esc(p.name);}).join(', ')+')</dd>'
    +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+(q.level?' ('+levelNote(q)+')':'')+'</dd>'+(q.tree?'<dt>Tree version</dt><dd>'+money(q.tree.price)+', 1:'+q.tree.scale+', about '+q.tree.grams+' g</dd>':'')+'<dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
    +'<dt>Post box</dt><dd>'+sh.box.join(' x ')+' mm</dd><dt>Post weight</dt><dd>'+Math.round(sh.actual*1000)+' g actual, '+Math.round(sh.cubic*1000)+' g cubic</dd><dt>Postage</dt><dd>'+money2(sh.cost)+'</dd></dl>';
+}
+/* Owner tools for plans that can't be worked: ask for what is missing, or close the order. Both email the customer; nothing is charged. */
+var NEEDS=['A floor plan with overall dimensions','Front and side elevations','A site plan showing the lot boundaries','A roof plan','A clearer copy: the PDF is a photo or too blurry to read','The full plan set, not just one or two pages'];
+var CLOSE=['I can\'t make a good model from these plans.','These are concept sketches without enough dimensions to model from.','This building is too large or complex for the printer.','This isn\'t something I can model right now.'];
+function badPlans(o){
+  if(['received','unreadable','preview'].indexOf(o.status)<0) return '';
+  return '<details style="margin-top:6px"'+(o.status==='unreadable'?' open':'')+'><summary>Plans not workable?</summary><div class="stack tight" style="margin-top:10px">'
+    +(o.asked?'<div class="note quiet small">Asked '+when(o.asked.at)+': '+esc((o.asked.need||[]).join('; ')+(o.asked.note?' '+o.asked.note:''))+(o.asked.mailed&&o.asked.mailed!=='sent'?' (email not sent: '+esc(o.asked.mailed)+')':'')+'</div>':'')
+    +'<span class="small"><b>Ask for better plans</b>. Tick what is missing:</span>'
+    +NEEDS.map(function(n,i){ return '<label class="small"><input type="checkbox" data-need value="'+esc(n)+'"> '+esc(n)+'</label>'; }).join('')
+    +'<div class="field"><label for="bp-note">Note to them (optional)</label><textarea id="bp-note" placeholder="e.g. The elevations are missing heights."></textarea></div>'
+    +'<div class="row"><button type="button" class="btn sm" id="bp-ask">Email them for better plans</button></div>'
+    +'<span class="small" style="margin-top:8px"><b>Or close it</b>. Nothing is charged.</span>'
+    +'<div class="row"><div class="field" style="flex:1 1 220px"><label for="bp-reason">Reason</label><select id="bp-reason">'+CLOSE.map(function(c){ return '<option>'+esc(c)+'</option>'; }).join('')+'</select></div><button type="button" class="btn danger sm" id="bp-close">Close and tell them</button></div>'
+    +'</div></details>';
 }
 function aiBlock(o){
   if(!o.ai) return '';
@@ -727,7 +744,7 @@ function renderQueue(){
        +(o.aiErr?'<div class="note bad">'+esc(o.aiErr)+'</div>'
          :o.status==='unreadable'?'<div class="note bad"><b>The plans could not be read well enough.</b> The customer has been told and asked for better plans. Nothing for you to do unless you want to step in.</div>'
          :'<div class="note quiet">The plans are being read. This starts by itself when the customer uploads.</div>')
-       +aiBlock(o)+stepIn+ed+'</div>';
+       +aiBlock(o)+stepIn+ed+badPlans(o)+'</div>';
     } else if(o.params){
       d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8,o).flags)+estTable(o.quote));
       if((o.status==='preview'||o.status==='hold_placed') && !editing && o.quote && o.quote.levels){
@@ -735,7 +752,7 @@ function renderQueue(){
          +['simple','standard','complex'].map(function(l){ return '<button type="button" class="btn ghost sm" data-level="'+l+'" aria-pressed="'+(o.quote.level===l)+'">'+LEVEL_NAME[l]+' '+money(o.quote.levels[l])+'</button>'; }).join('')+'</div>'
          +(o.status==='hold_placed'?'<span class="muted small">Lower: charged at the new price when you accept. Higher: the hold is released and the customer is emailed the new price to place the hold again.</span>':'<span class="muted small">The customer sees the new price straight away.</span>')+'</div>';
       }
-      if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn;
+      if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn+badPlans(o);
       if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+24*3600e3)+' or the hold lapses.'+(o.emailed?' Order email to you: '+esc(o.emailed)+'.':'')+(o.texted?' Text to you: '+esc(o.texted)+'.':'')+'</div>'
         +'<div class="row"><button type="button" class="btn" id="q-accept">Accept and charge '+money2(o.total)+'</button></div>'
         +'<div class="row"><div class="field" style="flex:1 1 220px"><label for="q-reason">Reason if declining</label><select id="q-reason"><option>The plans did not have enough detail to model this house well.</option><option>This roof is too complex for the simple model right now.</option><option>The printer is booked out for the next few weeks.</option></select></div><button type="button" class="btn danger" id="q-decline">Decline and release hold</button></div>';
@@ -764,6 +781,8 @@ function renderQueue(){
   var a=$('#q-accept'); if(a) a.addEventListener('click',function(){ act(o,{action:'accept'}, (o.choice==='stl'?'Charged. Files released to the customer.':'Charged. Job accepted.')); });
   var dc=$('#q-decline'); if(dc) dc.addEventListener('click',function(){ act(o,{action:'decline',reason:$('#q-reason').value},'Declined. Hold released (test).'); });
   $$('[data-level]',root).forEach(function(b){ b.addEventListener('click',function(){ var l=this.getAttribute('data-level'); if(o.quote.level===l) return; act(o,{action:'level',level:l},'Priced as '+LEVEL_NAME[l]+': '+money(o.quote.levels[l])+'.'); }); });
+  var bp=$('#bp-ask'); if(bp) bp.addEventListener('click',function(){ var need=$$('[data-need]:checked',root).map(function(c){ return c.value; }), note=$('#bp-note').value.trim(); if(!need.length&&!note){ toast('Tick what is missing or add a note.'); return; } act(o,{action:'ask_plans',need:need,note:note},'Customer asked for better plans.'); });
+  var bc=$('#bp-close'); if(bc) bc.addEventListener('click',function(){ act(o,{action:'close',reason:$('#bp-reason').value},'Order closed. Customer told.'); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
   bindAlerts();
   $('#set-save').addEventListener('click',function(){

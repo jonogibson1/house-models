@@ -35,7 +35,7 @@ const REVIEW_MS = 24 * 3600e3;
    when kit.js changes, bump this and add the new copy, so accepted orders keep printing exactly what the customer approved. */
 const KIT_VERSION = '2026-10-07';
 const KEEP_MS = 365 * 24 * 3600e3;   // contact details are removed 12 months after an order is finished or left
-const FINAL = ['collected', 'delivered', 'declined', 'lapsed'];
+const FINAL = ['collected', 'delivered', 'declined', 'lapsed', 'closed'];
 const finished = (o) => FINAL.includes(o.status) || (o.status === 'ready' && o.delivery === 'post');
 /* Remove the customer's name, email and file names a year on. The model and its house address stay, so it can be reprinted. */
 const scrub = (o) => {
@@ -150,6 +150,26 @@ async function notifyHold(env, db, o, site) {
     + '\nAccept or decline by ' + by + ' (24 hours). After that the hold lapses and nothing is charged.\n'
     + 'Review it: ' + site + '/#queue (Owner sign-in)\n', al);
   o.texted = await textOwner(env, 'New order ' + o.id + ': ' + what + ', A$' + (+o.total).toFixed(2) + '. Accept by ' + by + ' or it lapses. ' + site + '/#queue', al);
+}
+/* Tells the owner how an upload went, by email (and phone alert if it went wrong), so a failed read never sits unnoticed. */
+async function notifyUpload(env, db, id, site) {
+  const k = 'o:' + id, o = await db.load(k); if (!o || o.mailedRead === (o.reads || 0)) return;
+  const al = await db.load('alerts'), link = (site || (await db.load('site')) || '') + '/#queue';
+  const ok = o.status === 'preview' && o.quote, stuck = o.status === 'received' && !o.reads && !o.aiErr;
+  const head = ok ? 'preview ready, A$' + o.quote.print + ' (' + LEVEL_NAME[o.quote.level] + ')'
+    : stuck ? 'plans never arrived' : o.aiErr ? 'read failed' : 'plans could not be read';
+  const lines = ['Upload ' + o.id + ': ' + head + '.', '', 'Name: ' + o.name, 'Email: ' + o.email, 'House: ' + o.addr + (o.suburb ? ', ' + o.suburb : ''),
+    'Files: ' + ((o.files || []).map((f) => f.name).join(', ') || 'none listed')];
+  if (ok && o.ai && o.ai.confidence < 0.6) lines.push('', 'LOW CONFIDENCE: the read is shaky. Check the preview before they order; you can fix it by hand, ask for better plans or close it from the queue.', '');
+  if (ok) lines.push('Model: 1:' + o.quote.scale + ', ' + o.quote.size.map((v) => Math.round(v)).join(' x ') + ' mm, ' + o.quote.litres + ' L, about ' + o.quote.hours + ' h to print',
+    'Confidence: ' + Math.round(((o.ai && o.ai.confidence) || 0) * 100) + '%');
+  if (stuck) lines.push('', 'They confirmed their email and started an order, but the plan pages never reached the server. Worth an email to them.');
+  if (o.aiErr) lines.push('', 'Error: ' + o.aiErr);
+  const probs = (o.ai && o.ai.problems) || []; if (probs.length) lines.push('', 'Problems noted:', ...probs.map((p) => '- ' + p));
+  lines.push('', 'Open the queue: ' + link);
+  const mailed = await emailOwner(env, 'Upload ' + o.id + ': ' + head, lines.join('\n'), al);
+  if (!ok || (o.ai && o.ai.confidence < 0.6)) await textOwner(env, 'Upload ' + o.id + ' (' + o.name + '): ' + head + '. ' + link, al);
+  const now = await db.load(k); if (now) { now.mailedRead = o.reads || 0; now.uploadMailed = mailed || 'tried'; await db.save(k, now); }
 }
 const CHOICES = ['print', 'stl', 'tree'];
 /* Australia Post Parcel Post, own packaging, sent from Brisbane, as at 1 July 2026. Flat nationally up to 5 kg. */
@@ -560,6 +580,23 @@ async function handle(request, env, bg) {
           }
         } else { applyLevel(o); if (o.repriced) o.repriced = null; }
       }
+      else if (act === 'ask_plans' && ['received', 'unreadable', 'preview'].includes(o.status)) {
+        /* Bad or thin plans: tell the customer exactly what is missing and where to upload again. Nothing is charged. */
+        const need = strs(b.need, 8), note = str(b.note, 600), site = (await db.load('site')) || url.origin;
+        if (!need.length && !note) return fail(400, 'no_note', 'Pick what is missing or add a note.');
+        o.status = 'unreadable'; o.asked = { need, note, at: Date.now() };
+        o.asked.mailed = await sendMail(env, o.email, 'Your house model: I need better plans',
+          'Hi ' + (o.name || '').split(' ')[0] + ',\n\nThanks for sending your plans for ' + o.addr + '. I can\'t make a good model from them yet. I need:\n'
+          + need.map((x) => '- ' + x).join('\n') + (note ? (need.length ? '\n\n' : '') + note : '')
+          + '\n\nWhen you have them, upload them here: ' + site + '/#start\nOr reply to this email with the PDFs attached.\n\nNothing has been charged.\n\nJono\nSmall Build Co', await db.load('alerts')).catch(() => 'failed');
+      }
+      else if (act === 'close' && ['received', 'unreadable', 'preview'].includes(o.status)) {
+        /* Not something I can model: close it politely. No hold exists at these steps, so nothing to release. */
+        const reason = str(b.reason, 300) || 'I can\'t make a good model from these plans.';
+        o.status = 'closed'; o.closeReason = reason; o.decidedAt = Date.now();
+        o.closeMailed = await sendMail(env, o.email, 'Your house model', 'Hi ' + (o.name || '').split(' ')[0] + ',\n\nThanks for sending your plans for ' + o.addr + '. ' + reason
+          + '\n\nNothing has been charged. If you have other drawings, reply to this email and I\'ll take another look.\n\nJono\nSmall Build Co', await db.load('alerts')).catch(() => 'failed');
+      }
       else if (act === 'printing' && o.status === 'accepted') o.status = 'printing';
       else if (act === 'ready' && o.status === 'printing') o.status = 'ready';
       else if (act === 'collected' && o.status === 'ready') o.status = 'collected';
@@ -658,7 +695,7 @@ async function handle(request, env, bg) {
       if (!n && text.length < 40) return fail(400, 'no_pages', 'No readable pages arrived. Try a different PDF.');
       const no = await db.claim(k, open, 'read'); if (no) return fail(...WHY[no]);
       const pages = Math.min(40, +meta.pages || 0), over = await spend();
-      if (over) return finish(open, (x) => { x.aiErr = over; });
+      if (over) { const res = await finish(open, (x) => { x.aiErr = over; }); await notifyUpload(env, db, o.id, url.origin).catch(() => null); return res; }
       return slowBg(async () => {
         let j = null, err = null;
         /* Pass 1 reads the plans. Pass 2 sends the same pages back with the first answer and asks for an item-by-item check.
@@ -676,7 +713,9 @@ async function handle(request, env, bg) {
           }
         }
         catch (e) { if (!(e && e.code)) console.log('read failed', e && (e.stack || e.message || e)); err = ERR[e && e.code] || ERR.upstream; }
-        return finish(open, (x) => { x.pages = pages; x.images = n; x.aiErr = err; if (j) applyRead(x, j, pricing, false); });
+        const res = await finish(open, (x) => { x.pages = pages; x.images = n; x.aiErr = err; if (j) applyRead(x, j, pricing, false); });
+        await notifyUpload(env, db, o.id, url.origin).catch((e) => console.log('upload email failed', e && e.message));
+        return res;
       });
     }
     if (step === '/revise') {
@@ -744,6 +783,9 @@ async function sweep(env) {
     if (o.status === 'paying') {
       /* A customer who paid but closed the page before coming back. */
       try { if (await syncPay(env, o)) { changed = true; alert = o.status === 'hold_placed'; } } catch (e) { /* try again next sweep */ }
+    }
+    if (o.status === 'received' && o.mailedRead == null && !o.reads && Date.now() - o.created > 30 * 60e3 && Date.now() - o.created < 3 * 24 * 3600e3) {
+      await notifyUpload(env, db, o.id, site).catch(() => null); continue;
     }
     if (o.status === 'hold_placed' && !o.reminded && Date.now() - o.holdAt > REVIEW_MS - 3 * 3600e3 && Date.now() - o.holdAt <= REVIEW_MS) {
       o.reminded = 'pending'; changed = true;
