@@ -246,7 +246,7 @@ footer{margin-top:64px}
     </button>
     <nav class="nav" aria-label="Site">
       <button data-go="home">Home</button>
-      <button data-go="models">Models</button>
+      <button data-go="models">Samples</button>
       <button data-go="start" class="navcta">Upload plans</button>
       <button data-go="order">My order</button>
     </nav>
@@ -275,7 +275,7 @@ footer{margin-top:64px}
       <dl class="facts">
         <div><dt>Preview</dt><dd>See it in 3D before you pay</dd></div>
         <div><dt>Order</dt><dd>Only if you want it</dd></div>
-        <div><dt>Price</dt><dd><span class="from-word"></span><span class="from-price">A$500</span></dd></div>
+        <div><dt>Price</dt><dd><span class="from-word">from </span><span class="from-price">A$300</span></dd></div>
         <div><dt>Ornament</dt><dd>Christmas tree version A$60</dd></div>
       </dl>
     </div>
@@ -324,7 +324,7 @@ footer{margin-top:64px}
         <h2>Building your project</h2>
       <div class="twocol">
         <div class="stack tight"><p>I make models for builders and developers from DA drawings, construction drawings or a survey. Houses, townhouses, halls and commercial jobs, usually at 1:100 to 1:250.</p>
-          <p class="muted">Email the drawings to <span class="mono">hello@smallbuild.com.au</span> for a price.</p><div class="row"><button class="btn ghost sm" data-go="models">See recent models</button></div></div>
+          <p class="muted">Email the drawings to <span class="mono">hello@smallbuild.com.au</span> for a price.</p><div class="row"><button class="btn ghost sm" data-go="models">See samples</button></div></div>
         <div class="stack tight">
           <div class="stack tight"><h3>Tender interviews</h3><p class="muted">Bring a model of the job to the interview. It shows you have read the drawings.</p></div>
           <div class="stack tight"><h3>Handover gifts</h3><p class="muted">Give the owner a model of their house at handover, with your name on the base. Good for repeat work and referrals.</p></div>
@@ -363,6 +363,17 @@ footer{margin-top:64px}
           <tr><td class="ref">P-03</td><td class="item">Print files only</td><td class="desc">Print files for your house. Prints without supports.</td><td class="pr"><span class="price" id="price-stl"></span></td></tr>
         </tbody>
       </table></div>
+      <h3 style="margin-top:22px">Examples</h3>
+      <p class="muted">The price follows how much model there is (its box, length x width x height) and how much detail is in it: extra storeys, verandahs and decks on posts, several roof forms, a busy block.</p>
+      <div class="tablewrap"><table class="prices">
+        <thead><tr><th>House</th><th>Model</th><th class="pr">Price</th></tr></thead>
+        <tbody id="price-examples">
+          <tr><td class="item">Single-storey cottage on a narrow lot</td><td class="desc">280 x 118 x 51 mm, 1.7 L, simple detail</td><td class="pr"><span class="price">A$300</span></td></tr>
+          <tr><td class="item">Single-storey house, verandah and landscaping</td><td class="desc">300 x 250 x 70 mm, 5.3 L, standard detail</td><td class="pr"><span class="price">A$430</span></td></tr>
+          <tr><td class="item">Two-storey home, decks on posts, full lot</td><td class="desc">329 x 309 x 114 mm, 11.6 L, complex detail</td><td class="pr"><span class="price">A$650</span></td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted small">Your exact price shows with your preview, before you order. I check the detail level when I review the order; if it changes the price, you see it before anything is charged.</p>
       </div>
     </div>
 
@@ -375,6 +386,7 @@ footer{margin-top:64px}
       <details><summary>What if I don't like the preview?</summary><p>Don't order. Or ask for one free round of changes.</p></details>
       <details><summary>What is the Christmas tree version?</summary><p>Your house about 60 mm across, with a ribbon through the roof. A$60. You see it in 3D before you order.</p></details>
       <details><summary>How big is it?</summary><p>1:100, so 10 mm per metre. A typical house on a 32 m block is about 320 mm long. Blocks that don't fit the 340 x 320 mm print bed are cropped around the house. Large houses are done at 1:150. The preview shows the final size.</p></details>
+      <details><summary>How is the price worked out?</summary><p>From the size of the model and how detailed it is. A$265 plus A$20 per litre of the model's box, then more for standard or complex detail, rounded to the nearest A$10. The lowest price is A$300. You see your price with the preview.</p></details>
       <details><summary>When do I pay?</summary><p>When you order, your card is held. I confirm within 24 hours and only then is it charged. If I don't confirm, the hold is released.</p></details>
       <details><summary>What happens to my files?</summary><p>Your model is kept so you can reorder or download it later. Your name and email are deleted 12 months after the order is finished. Print files are for personal use only. Your PDF plans are not stored.</p></details>
       <details><summary>Can I give one as a gift?</summary><p>Yes, if you can get the plans.</p></details>
@@ -436,10 +448,10 @@ footer{margin-top:64px}
 
   <section class="view" id="v-models" hidden>
     <div class="stack">
-      <span class="eyebrow">Models</span>
-      <h2>Recent models</h2>
+      <span class="eyebrow">Samples</span>
+      <h2>Samples</h2>
       <p class="muted" style="max-width:46em">Drag to turn, scroll or pinch to zoom. These are the real print files, simplified so they load faster.</p>
-      <div class="row seg" role="group" aria-label="Models" id="gal-tabs"></div>
+      <div class="row seg" role="group" aria-label="Samples" id="gal-tabs"></div>
       <div class="split">
         <div class="stage" id="stage-gallery" aria-label="3D model. Drag to turn it."></div>
         <div class="stack tight" id="gal-spec"></div>

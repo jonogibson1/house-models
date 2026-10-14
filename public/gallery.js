@@ -9,7 +9,7 @@
     box.appendChild(el('h3',null,m.name));
     box.appendChild(el('p','muted',m.place));
     var dl=el('dl','spec');
-    [['Scale',m.scale],['Printed size',m.size[0].toFixed(0)+' x '+m.size[1].toFixed(0)+' x '+m.size[2].toFixed(0)+' mm'],['Finish','White, one piece']].forEach(function(r){ dl.appendChild(el('dt',null,r[0])); dl.appendChild(el('dd',null,r[1])); });
+    [['Scale',m.scale],['Printed size',m.size[0].toFixed(0)+' x '+m.size[1].toFixed(0)+' x '+m.size[2].toFixed(0)+' mm'],['Finish','White, one piece']].concat(m.price?[['Price','A$'+m.price+' ('+({simple:'Simple',standard:'Standard',complex:'Complex'}[m.level]||'')+' detail, '+m.litres.toFixed(1)+' L)']]:[]).forEach(function(r){ dl.appendChild(el('dt',null,r[0])); dl.appendChild(el('dd',null,r[1])); });
     box.appendChild(dl);
   }
   function show(m){
@@ -26,7 +26,7 @@
     if(list){ if(cur) show(cur); return; }
     fetch('/models/index.json').then(function(r){ return r.json(); }).then(function(ms){
       list=ms; tabs.textContent='';
-      ms.forEach(function(m){ var b=el('button','btn ghost sm',m.place.split(',')[0]+'  '+m.scale); b.type='button'; b.dataset.id=m.id; b.addEventListener('click',function(){ show(m); }); tabs.appendChild(b); });
+      ms.forEach(function(m){ var b=el('button','btn ghost sm',m.place.split(',')[0]+'  '+m.scale+(m.price?'  A$'+m.price:'')); b.type='button'; b.dataset.id=m.id; b.addEventListener('click',function(){ show(m); }); tabs.appendChild(b); });
       show(ms[0]);
     });
   };

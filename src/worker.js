@@ -5,7 +5,31 @@ import { DurableObject } from 'cloudflare:workers';
 import '../public/gen.js';
 
 const G = globalThis.HouseGen;
-const DEFAULT_PRICING = { min: 500, fee: 500, perGram: 0, stl: 30, tree: 60 };   // printed model: one price, A$500
+/* Printed model price: (base + perLitre x litres of the model's bounding box) x the detail level, rounded to A$10, never under floor.
+   Bulk sets the price, detail lifts it. Fitted to Mitchelton (1.7 L, simple) = A$300 and Bardon (11.6 L, complex) = A$650. */
+const DEFAULT_PRICING = { base: 265, perLitre: 20, floor: 300, standard: 1.15, complex: 1.3, stl: 30, tree: 60 };
+const LEVELS = ['simple', 'standard', 'complex'];
+const LEVEL_NAME = { simple: 'Simple', standard: 'Standard', complex: 'Complex' };
+const litresOf = (size) => Math.round(size[0] * size[1] * size[2] / 1e5) / 10;
+function priceAt(litres, level, p) {
+  const mult = level === 'complex' ? +p.complex : level === 'standard' ? +p.standard : 1;
+  return Math.max(+p.floor, Math.round((+p.base + +p.perLitre * litres) * mult / 10) * 10);
+}
+/* A first guess at the detail level from what was read off the plans. The owner can change it at review. */
+function autoLevel(params) {
+  const bl = (params && params.blocks) || [], open = bl.filter((b) => b.open), shut = bl.length - open.length;
+  const storeys = Math.max(1, ...bl.map((b) => +b.storeys || 1)), roofs = new Set(bl.filter((b) => !b.roofWith).map((b) => b.roof)).size;
+  const posts = bl.reduce((n, b) => n + (Array.isArray(b.posts) && b.posts.length ? b.posts.length : b.open ? 4 : 0), 0);
+  const items = (params && params.site && Array.isArray(params.site.items)) ? params.site.items.length : 0;
+  const score = Math.max(0, shut - 1) + open.length + (storeys >= 2 ? 2 : 0) + (roofs > 1 ? 1 : 0) + (posts > 8 ? 1 : 0) + (items > 10 ? 1 : 0);
+  return score <= 1 ? 'simple' : score <= 4 ? 'standard' : 'complex';
+}
+/* Puts the chosen level's price on the quote: the owner's pick if they made one, else the automatic guess. */
+function applyLevel(o) {
+  if (!o.quote || !o.quote.levels) return;
+  const lv = LEVELS.includes(o.levelSet) ? o.levelSet : o.quote.auto;
+  o.quote.level = lv; o.quote.print = o.quote.levels[lv];
+}
 const REVIEW_MS = 24 * 3600e3;
 /* The model builder version an accepted order is frozen to. public/kit/<KIT_VERSION>.js must be a copy of public/kit.js;
    when kit.js changes, bump this and add the new copy, so accepted orders keep printing exactly what the customer approved. */
@@ -279,7 +303,12 @@ function quoteFor(params, pricing) {
   const r = G.build(params, 4);
   return { scale: r.scale, size: r.size.map((v) => Math.round(v * 10) / 10), grams: Math.ceil(r.grams), hours: Math.round(r.hours * 10) / 10, fits: r.fits,
     parts: r.parts.map((p) => ({ name: p.name, label: p.label })), flags: r.flags,
-    print: Math.max(pricing.min, Math.round(pricing.fee + Math.ceil(r.grams) * pricing.perGram)), stl: pricing.stl, ship: shipFor(r), tree: treeFor(params, pricing) };
+    stl: pricing.stl, ship: shipFor(r), tree: treeFor(params, pricing), ...printQuote(r.size, params, pricing) };
+}
+function printQuote(size, params, pricing) {
+  const litres = litresOf(size), auto = autoLevel(params), levels = {};
+  for (const lv of LEVELS) levels[lv] = priceAt(litres, lv, pricing);
+  return { litres, auto, level: auto, levels, print: levels[auto] };
 }
 /* The Christmas tree version: the same house, small, with a hanging hole. Flat price. */
 function treeFor(params, pricing) {
@@ -447,7 +476,7 @@ function applyRead(o, j, pricing, revise) {
   if (params) o.summary = summary(params);
   let q = null;
   if (params && !(j && j.readable === false) && conf >= 0.4) { try { q = quoteFor(params, pricing); } catch (e) { q = null; } }
-  if (q && q.fits) { o.params = params; o.quote = q; o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup'; }
+  if (q && q.fits) { o.params = params; o.quote = q; applyLevel(o); o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup'; }
   else if (revise) { o.status = 'preview'; o.ai.problems.unshift('The change could not be worked in, so the model is unchanged.'); }
   else { o.status = 'unreadable'; if (params && !q) o.ai.problems.push('A printable model could not be built from the dimensions that were read.'); }
 }
@@ -497,7 +526,7 @@ async function handle(request, env, bg) {
     }
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
-      for (const k of ['min', 'fee', 'perGram', 'stl', 'tree']) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
+      for (const k of Object.keys(DEFAULT_PRICING)) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
       await db.save('pricing', p); return json({ pricing: p });
     }
     const am = path.match(/^\/api\/admin\/orders\/([A-Z0-9-]{4,12})$/);
@@ -507,12 +536,30 @@ async function handle(request, env, bg) {
       const b = await body(), act = b.action;
       if (act === 'accept' && o.status === 'hold_placed') {
         if (o.pay && o.pay.pi && stripeOn(env)) {
-          try { await stripe(env, 'POST', 'payment_intents/' + o.pay.pi + '/capture', {}); o.pay.captured = Date.now(); }
+          try { await stripe(env, 'POST', 'payment_intents/' + o.pay.pi + '/capture', { amount_to_capture: String(Math.round(o.total * 100)) }); o.pay.captured = Date.now(); }
           catch (e) { return fail(502, 'stripe', 'The card could not be charged: ' + (e.message || 'Stripe error') + ' Nothing has changed on the order.'); }
         }
         o.status = o.choice === 'stl' ? 'delivered' : 'accepted'; o.decidedAt = Date.now(); o.kit = KIT_VERSION;
       }
       else if (act === 'decline' && o.status === 'hold_placed') { o.status = 'declined'; o.declineReason = str(b.reason, 200); o.decidedAt = Date.now(); await releaseHold(env, o).catch(() => false); }
+      else if (act === 'level' && LEVELS.includes(b.level) && o.quote && o.quote.levels && ['preview', 'hold_placed'].includes(o.status)) {
+        const before = o.quote.print;
+        o.levelSet = b.level;
+        if (o.status === 'hold_placed') {
+          const was = o.total; applyLevel(o); const t = totals(o);
+          if (t.total <= was + 0.001) Object.assign(o, t);   // lower or the same: charge the new amount at accept, within the hold
+          else {
+            /* Higher than the hold: release it and send the customer back to the preview at the new price. */
+            await releaseHold(env, o).catch(() => false);
+            o.pay = null; o.status = 'preview'; o.holdAt = null; o.repriced = { from: before, to: o.quote.print, level: o.quote.level, at: Date.now() };
+            const site = (await db.load('site')) || url.origin;
+            await sendMail(env, o.email, 'Your model price: ' + LEVEL_NAME[o.quote.level] + ' detail, A$' + o.quote.print,
+              'Hi ' + (o.name || '') + ',\n\nI\'ve reviewed your plans. There is more detail in this one than the first estimate allowed for, so I\'ve priced it as '
+              + LEVEL_NAME[o.quote.level] + ' detail: A$' + o.quote.print + ' (it was A$' + before + ').\n\nYour card hold has been released and nothing was charged. '
+              + 'If you\'d like to go ahead at the new price, open your order and place the hold again:\n' + site + '/?o=' + o.id + '.' + o.key + '\n\nJono\nSmall Build Co', await db.load('alerts')).catch(() => null);
+          }
+        } else { applyLevel(o); if (o.repriced) o.repriced = null; }
+      }
       else if (act === 'printing' && o.status === 'accepted') o.status = 'printing';
       else if (act === 'ready' && o.status === 'printing') o.status = 'ready';
       else if (act === 'collected' && o.status === 'ready') o.status = 'collected';
@@ -520,7 +567,7 @@ async function handle(request, env, bg) {
         if (o.busy && Date.now() - o.busy < BUSY_MS) return fail(409, 'busy', 'This order is being read right now. Try again in a minute.');
         const params = sanitise(b.params); if (!params) return fail(400, 'bad_params', 'That model has no usable blocks, or is more than 80 m across.');
         const q = quoteFor(params, pricing); if (!q.fits) return fail(400, 'too_big', 'That model does not fit the printer at this scale.');
-        o.params = params; o.quote = q; o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.aiErr = null; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup';
+        o.params = params; o.quote = q; applyLevel(o); o.status = 'preview'; o.ver = (o.ver || 0) + 1; o.aiErr = null; o.choice = o.choice || 'print'; o.delivery = o.delivery || 'pickup';
       } else return fail(409, 'bad_step', 'That step does not apply to this order right now.');
       if (finished(o) && !o.doneAt) o.doneAt = Date.now();
       await db.save('o:' + o.id, o); return json({ order: o });

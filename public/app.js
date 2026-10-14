@@ -50,7 +50,7 @@ function save(){ try{ localStorage.setItem(LS, JSON.stringify(mem)); }catch(e){}
 function keyOf(id){ for(var i=0;i<mem.mine.length;i++) if(mem.mine[i].id===id) return mem.mine[i].k; return ''; }
 function remember(id,k){ if(!keyOf(id)) mem.mine.unshift({id:id,k:k}); mem.current=id; save(); }
 var cur = null;                                   // the order on screen, as the server last gave it
-var cfg = { pricing:{min:500,fee:500,perGram:0,stl:30,tree:60}, ready:true };
+var cfg = { pricing:{base:265,perLitre:20,floor:300,standard:1.15,complex:1.3,stl:30,tree:60}, ready:true };
 var admin = { key:'', ok:false, orders:[], sel:null, err:'', gen:0 };
 try{ admin.key = sessionStorage.getItem('fhm-owner') || ''; }catch(e){}
 var ui = { pay:false, pending:null, err:'', busy:'', edit:null };
@@ -101,7 +101,21 @@ function canvasRuns(text){
 }
 /* Used for the sample on the home page and the owner's live editor. Orders themselves carry the server's quote. */
 var POST = [[0.25,10.20],[0.5,11.70],[1,16.00],[3,20.25],[5,24.45]];
-function printPrice(r){ var p=cfg.pricing; return Math.max(p.min, Math.round(p.fee + Math.ceil(r.grams) * p.perGram)); }
+/* Same rule as the server: (base + per litre of the model's box) x detail level, to the nearest A$10, never under the floor. */
+var LEVEL_NAME={simple:'Simple',standard:'Standard',complex:'Complex'};
+function litresOf(size){ return Math.round(size[0]*size[1]*size[2]/1e5)/10; }
+function priceAt(litres, level){ var p=cfg.pricing, m=level==='complex'?+p.complex:level==='standard'?+p.standard:1; return Math.max(+p.floor, Math.round((+p.base + +p.perLitre*litres)*m/10)*10); }
+function autoLevel(params){
+  var bl=(params&&params.blocks)||[], open=bl.filter(function(b){return b.open;}), shut=bl.length-open.length;
+  var storeys=Math.max.apply(null,[1].concat(bl.map(function(b){return +b.storeys||1;}))), roofs={}, nr=0;
+  bl.forEach(function(b){ if(!b.roofWith && !roofs[b.roof]){ roofs[b.roof]=1; nr++; } });
+  var posts=bl.reduce(function(n,b){ return n+(b.posts&&b.posts.length?b.posts.length:b.open?4:0); },0);
+  var items=params&&params.site&&params.site.items?params.site.items.length:0;
+  var score=Math.max(0,shut-1)+open.length+(storeys>=2?2:0)+(nr>1?1:0)+(posts>8?1:0)+(items>10?1:0);
+  return score<=1?'simple':score<=4?'standard':'complex';
+}
+function printPrice(r, params){ return priceAt(litresOf(r.size), params?autoLevel(params):'simple'); }
+function levelNote(q){ return q && q.level ? LEVEL_NAME[q.level]+' detail, '+(+q.litres).toFixed(1)+' L box' : ''; }
 function shipFor(r){
   var pad=20, L=Math.max(120,Math.ceil((r.size[0]+2*pad)/5)*5), W=Math.max(100,Math.ceil((r.size[1]+2*pad)/5)*5), H=Math.max(60,Math.ceil((r.size[2]+2*pad)/5)*5);
   var actual=(r.grams+150)/1000, cubic=L*W*H/1e9*250, kg=Math.max(actual,cubic), cost=POST[POST.length-1][1];
@@ -232,17 +246,19 @@ var home = { tree:false };
 document.addEventListener('click',function(e){ var b=e.target.closest('[data-hero]'); if(!b) return; home.tree = b.getAttribute('data-hero')==='tree'; renderHome(); });
 function renderHome(){
   var p=cfg.pricing, r=built(SAMPLE,0.8), sh=shipFor(r);
-  var flat=!(+p.perGram>0) && +p.fee<=+p.min;
-  $('#price-print').textContent=(flat?'':'From ')+money(p.min);
-  $('#price-print-note').textContent=(flat?'One price for any house that fits the printer at 1:100 or 1:150, including the block. ':'Priced on the filament your model uses. A 19 metre single-storey home on a 32 metre lot with the landscaping is '+money(printPrice(r))+'. ')+'Pickup is free. Post is at cost, '+money2(sh.cost)+' for a typical house.';
-  $$('.from-word').forEach(function(el){ el.textContent=flat?'':'from '; });
+  $('#price-print').textContent='From '+money(+p.floor);
+  $('#price-print-note').textContent='Priced on bulk and detail: A$'+p.base+' plus A$'+p.perLitre+' per litre of the model\'s box (length x width x height), then x'+(+p.standard).toFixed(2)+' for standard detail or x'+(+p.complex).toFixed(2)+' for complex. You see the price with the preview. Pickup is free. Post is at cost, '+money2(sh.cost)+' for a typical house.';
+  $$('.from-word').forEach(function(el){ el.textContent='from '; });
+  var ex=$('#price-examples');
+  if(ex) ex.innerHTML=[['Single-storey cottage on a narrow lot','280 x 118 x 51 mm',1.7,'simple'],['Single-storey house, verandah and landscaping','300 x 250 x 70 mm',5.3,'standard'],['Two-storey home, decks on posts, full lot','329 x 309 x 114 mm',11.6,'complex']]
+    .map(function(e){ return '<tr><td class="item">'+e[0]+'</td><td class="desc">'+e[1]+', '+e[2].toFixed(1)+' L, '+LEVEL_NAME[e[3]].toLowerCase()+' detail</td><td class="pr"><span class="price">'+money(priceAt(e[2],e[3]))+'</span></td></tr>'; }).join('');
   $('#price-stl').textContent=money(p.stl);
   $('#price-tree').textContent=money(p.tree!=null?p.tree:60);
   var tr=built(treeOf(SAMPLE),0.8);
   $('#price-tree-note').textContent='Your house at about 1:'+tr.scale+', '+Math.round(tr.size[0])+' mm across, with a ribbon to hang it.';
   var heroTree = home.tree;
   $$('[data-hero]').forEach(function(b){ b.setAttribute('aria-pressed', String((b.getAttribute('data-hero')==='tree')===heroTree)); });
-  $$('.from-price').forEach(function(el){ el.textContent=money(p.min); });
+  $$('.from-price').forEach(function(el){ el.textContent=money(+p.floor); });
   // the about photo goes in #about-pic in index.html; nothing is drawn here so it is never overwritten
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero'));
   if(heroTree){ v.set(tr); $('#hero-cap').textContent='Christmas tree version, about 1:'+tr.scale+'. The can is 375 ml. Drag to turn.'; }
@@ -534,7 +550,8 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Your preview</h3><p class="muted">This is the model as it will be printed.</p>'+facts(o,ch)
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Your preview</h3><p class="muted">This is the model as it will be printed.</p>'
+     +(o.repriced?'<div class="note warn">I reviewed your plans and priced this model as '+LEVEL_NAME[o.repriced.level].toLowerCase()+' detail: '+money(o.repriced.to)+' (was '+money(o.repriced.from)+'). Your earlier card hold was released. Order again below to go ahead.</div>':'')+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>Assumptions</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>Checks</summary>'+ulist(o.ai.checks)+'</details>':'')
      +(ui.busy==='revise'?'<div class="row" style="flex-wrap:nowrap"><span class="spin" aria-hidden="true"></span><span>Making your changes. Takes a minute or two.</span></div>'
@@ -542,7 +559,7 @@ function renderOrder(){
        :!o.revUsed&&ui.step==='change'?'<div class="stack tight" id="change-box"><h3>Changes</h3><label for="rev-note" class="small">List everything in one message. You get one round.</label><textarea id="rev-note" placeholder="e.g. The garage roof is hipped. The front path is 1.2 m wide."></textarea><div class="row"><button class="btn" id="rev-send">Send changes</button><button class="btn ghost" id="change-back">Back</button></div></div>'
        :(o.revUsed?'<p class="muted small">Your changes are in.</p>':'')
         +'<div class="choice three" role="radiogroup" aria-label="What would you like?">'
-     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">White, 1:'+q.scale+'.</span></label>'
+     +'<label><input type="radio" name="choice" id="ch-print" value="print"'+(ch==='print'?' checked':'')+'><span class="lab">Printed model</span><span class="price">'+money(q.print)+'</span><span class="muted small">White, 1:'+q.scale+'.'+(q.level?' '+levelNote(q)+'.':'')+'</span></label>'
      +(q.tree?'<label><input type="radio" name="choice" id="ch-tree" value="tree"'+(ch==='tree'?' checked':'')+'><span class="lab">Christmas tree version</span><span class="price">'+money(q.tree.price)+'</span><span class="muted small">'+Math.round(Math.max(q.tree.size[0],q.tree.size[1]))+' mm across, with a ribbon.</span></label>':'')
      +'<label><input type="radio" name="choice" id="ch-stl" value="stl"'+(ch==='stl'?' checked':'')+'><span class="lab">STL files only</span><span class="price">'+money(q.stl)+'</span><span class="muted small">Print it yourself. No supports.</span></label></div>'
      +'<div class="choice" id="dv-box" role="radiogroup" aria-label="How would you like to get it?"'+(ch==='stl'?' hidden':'')+'>'
@@ -617,11 +634,11 @@ function blockEditor(params){
   }).join('');
 }
 function flagList(flags){ return '<ul class="flags">'+flags.map(function(f){ return '<li class="'+esc(f.lvl)+'">'+esc(f.text)+'</li>'; }).join('')+'</ul>'; }
-function estFromBuild(r){ var sh=shipFor(r); return { scale:r.scale, size:r.size, grams:Math.ceil(r.grams), hours:r.hours, parts:r.parts, print:printPrice(r), stl:cfg.pricing.stl, ship:sh, flags:r.flags, fits:r.fits }; }
+function estFromBuild(r, params){ var sh=shipFor(r), lv=params?autoLevel(params):'simple'; return { scale:r.scale, size:r.size, grams:Math.ceil(r.grams), hours:r.hours, parts:r.parts, level:lv, litres:litresOf(r.size), print:priceAt(litresOf(r.size),lv), stl:cfg.pricing.stl, ship:sh, flags:r.flags, fits:r.fits }; }
 function estTable(q){
   var sh=q.ship;
   return '<dl class="spec"><dt>Scale</dt><dd>1:'+q.scale+'</dd><dt>Size</dt><dd>'+q.size.map(function(v){return (+v).toFixed(1);}).join(' x ')+' mm</dd><dt>Parts</dt><dd>'+q.parts.length+' ('+q.parts.map(function(p){return esc(p.name);}).join(', ')+')</dd>'
-   +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+'</dd>'+(q.tree?'<dt>Tree version</dt><dd>'+money(q.tree.price)+', 1:'+q.tree.scale+', about '+q.tree.grams+' g</dd>':'')+'<dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
+   +'<dt>Filament</dt><dd>about '+q.grams+' g</dd><dt>Print time</dt><dd>about '+(+q.hours).toFixed(1)+' h</dd><dt>Printed price</dt><dd>'+money(q.print)+(q.level?' ('+levelNote(q)+')':'')+'</dd>'+(q.tree?'<dt>Tree version</dt><dd>'+money(q.tree.price)+', 1:'+q.tree.scale+', about '+q.tree.grams+' g</dd>':'')+'<dt>STL price</dt><dd>'+money(q.stl)+'</dd>'
    +'<dt>Post box</dt><dd>'+sh.box.join(' x ')+' mm</dd><dt>Post weight</dt><dd>'+Math.round(sh.actual*1000)+' g actual, '+Math.round(sh.cubic*1000)+' g cubic</dd><dt>Postage</dt><dd>'+money2(sh.cost)+'</dd></dl>';
 }
 function aiBlock(o){
@@ -672,9 +689,12 @@ function renderQueue(){
     :'<p class="muted">No orders yet. They appear here as soon as someone uploads plans.</p>';
   var p=cfg.pricing;
   var settings='<details style="margin-top:18px"><summary>Prices</summary><div class="stack tight" style="margin-top:10px">'
-    +'<div class="field"><label for="set-min">Minimum price A$</label><input type="number" id="set-min" value="'+p.min+'"></div>'
-    +'<div class="field"><label for="set-fee">Making fee A$</label><input type="number" id="set-fee" value="'+p.fee+'"></div>'
-    +'<div class="field"><label for="set-g">Filament A$ per gram</label><input type="number" step="0.05" id="set-g" value="'+p.perGram+'"></div>'
+    +'<p class="muted small">Printed model = (base + per litre x the model\'s box in litres) x detail level, to the nearest A$10, never under the floor.</p>'
+    +'<div class="field"><label for="set-base">Base A$</label><input type="number" id="set-base" value="'+p.base+'"></div>'
+    +'<div class="field"><label for="set-litre">Per litre A$</label><input type="number" id="set-litre" value="'+p.perLitre+'"></div>'
+    +'<div class="field"><label for="set-floor">Lowest price A$</label><input type="number" id="set-floor" value="'+p.floor+'"></div>'
+    +'<div class="field"><label for="set-std">Standard detail x</label><input type="number" step="0.05" id="set-std" value="'+p.standard+'"></div>'
+    +'<div class="field"><label for="set-cx">Complex detail x</label><input type="number" step="0.05" id="set-cx" value="'+p.complex+'"></div>'
     +'<div class="field"><label for="set-stl">STL files A$</label><input type="number" id="set-stl" value="'+p.stl+'"></div>'
     +'<div class="field"><label for="set-tree">Christmas tree version A$</label><input type="number" id="set-tree" value="'+(p.tree!=null?p.tree:60)+'"></div>'
     +'<div class="row"><button type="button" class="btn sm" id="set-save">Save prices</button></div>'
@@ -693,7 +713,7 @@ function renderQueue(){
     var stage='<div class="stagebox" style="margin-top:18px"><div class="stage" id="stage-queue"></div></div>';
     var ed='';
     if(editing){
-      var er=built(ui.edit.params,0.8), eq=estFromBuild(er);
+      var er=built(ui.edit.params,0.8), eq=estFromBuild(er,ui.edit.params);
       ed=stage+'<div class="stack" style="margin-top:14px"><div class="grid2"><div class="field"><label for="ed-scale">Scale</label><select id="ed-scale">'
         +[['auto','Auto (1:100 if it fits the plate)'],['100','1:100'],['150','1:150'],['200','1:200'],['250','1:250']].map(function(s){ return '<option value="'+s[0]+'"'+(String(ui.edit.params.scale)===s[0]?' selected':'')+'>'+s[1]+'</option>'; }).join('')+'</select></div></div>'
         +'<div id="ed-blocks" class="stack tight">'+blockEditor(ui.edit.params)+'</div>'
@@ -710,6 +730,11 @@ function renderQueue(){
        +aiBlock(o)+stepIn+ed+'</div>';
     } else if(o.params){
       d+=(editing?ed:stage)+'<div class="stack" style="margin-top:16px">'+copyBox('cl-url','Customer\'s order link, in case they lose theirs.',orderLink(o.id,o.key))+aiBlock(o)+(editing?'':'<dl class="spec">'+detailRows(o)+'</dl>'+flagList(built(o.params,0.8,o).flags)+estTable(o.quote));
+      if((o.status==='preview'||o.status==='hold_placed') && !editing && o.quote && o.quote.levels){
+        d+='<div class="stack tight"><span class="small"><b>Detail level</b> (bulk '+(+o.quote.litres).toFixed(1)+' L, first guess '+LEVEL_NAME[o.quote.auto]+')</span><div class="row seg" role="group" aria-label="Detail level">'
+         +['simple','standard','complex'].map(function(l){ return '<button type="button" class="btn ghost sm" data-level="'+l+'" aria-pressed="'+(o.quote.level===l)+'">'+LEVEL_NAME[l]+' '+money(o.quote.levels[l])+'</button>'; }).join('')+'</div>'
+         +(o.status==='hold_placed'?'<span class="muted small">Lower: charged at the new price when you accept. Higher: the hold is released and the customer is emailed the new price to place the hold again.</span>':'<span class="muted small">The customer sees the new price straight away.</span>')+'</div>';
+      }
       if(o.status==='preview' && !editing) d+='<div class="note quiet">Preview is with the customer. Nothing for you to do until they place a hold.</div>'+stepIn;
       if(o.status==='hold_placed') d+='<div class="note warn"><b>Your one decision.</b> The customer has seen this preview and a hold of '+money2(o.total)+' is on their card. Accept to charge it and take the job. Confirm by '+when(o.holdAt+24*3600e3)+' or the hold lapses.'+(o.emailed?' Order email to you: '+esc(o.emailed)+'.':'')+(o.texted?' Text to you: '+esc(o.texted)+'.':'')+'</div>'
         +'<div class="row"><button type="button" class="btn" id="q-accept">Accept and charge '+money2(o.total)+'</button></div>'
@@ -725,7 +750,7 @@ function renderQueue(){
   $$('[data-sel]',root).forEach(function(b){ b.addEventListener('click',function(){ admin.sel=this.getAttribute('data-sel'); ui.edit=null; renderQueue(); }); });
   $('#own-out').addEventListener('click',function(){ admin.gen++; admin.ok=false; admin.key=''; admin.orders=[]; try{ sessionStorage.removeItem('fhm-owner'); }catch(e){} renderQueue(); });
   var eo=$('#ed-open'); if(eo) eo.addEventListener('click',function(){ ui.edit={ id:o.id, params:o.params?clone(o.params):{scale:'auto',blocks:[{name:'Main house',x:0,y:0,w:12,d:8,storeys:1,storeyH:2.7,roof:'hip',pitch:22.5,eave:0.6,ridge:'auto',high:'n'}]} }; renderQueue(); });
-  function refresh(){ var r=built(ui.edit.params,0.8), q=estFromBuild(r); $('#ed-out').innerHTML=flagList(q.flags)+estTable(q); $('#ed-send').disabled=!q.fits; viewer('queue').set(r); }
+  function refresh(){ var r=built(ui.edit.params,0.8), q=estFromBuild(r,ui.edit.params); $('#ed-out').innerHTML=flagList(q.flags)+estTable(q); $('#ed-send').disabled=!q.fits; viewer('queue').set(r); }
   var eb=$('#ed-blocks');
   if(eb){
     eb.addEventListener('input',function(e){ var t=e.target, i=t.getAttribute('data-b'), f=t.getAttribute('data-f'); if(i==null) return; var val=t.type==='number'?parseFloat(t.value):t.value; if(t.type==='number'&&isNaN(val)) return; ui.edit.params.blocks[+i][f]=val; clearTimeout(edT); edT=setTimeout(refresh,180); });
@@ -738,10 +763,11 @@ function renderQueue(){
   var qd=$('#q-dl'); if(qd) qd.addEventListener('click',function(){ saveZip(o); });
   var a=$('#q-accept'); if(a) a.addEventListener('click',function(){ act(o,{action:'accept'}, (o.choice==='stl'?'Charged. Files released to the customer.':'Charged. Job accepted.')); });
   var dc=$('#q-decline'); if(dc) dc.addEventListener('click',function(){ act(o,{action:'decline',reason:$('#q-reason').value},'Declined. Hold released (test).'); });
+  $$('[data-level]',root).forEach(function(b){ b.addEventListener('click',function(){ var l=this.getAttribute('data-level'); if(o.quote.level===l) return; act(o,{action:'level',level:l},'Priced as '+LEVEL_NAME[l]+': '+money(o.quote.levels[l])+'.'); }); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
   bindAlerts();
   $('#set-save').addEventListener('click',function(){
-    api('PUT','/api/admin/pricing',{min:$('#set-min').value,fee:$('#set-fee').value,perGram:$('#set-g').value,stl:$('#set-stl').value,tree:$('#set-tree').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
+    api('PUT','/api/admin/pricing',{base:$('#set-base').value,perLitre:$('#set-litre').value,floor:$('#set-floor').value,standard:$('#set-std').value,complex:$('#set-cx').value,stl:$('#set-stl').value,tree:$('#set-tree').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
   });
 }
 
