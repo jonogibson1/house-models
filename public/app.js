@@ -550,7 +550,7 @@ function renderOrder(){
   var right='';
   if(o.status==='preview'){
     var ch=o.choice||'print', dv=o.delivery||'pickup';
-    right='<span class="eyebrow">Step 2 of 4</span><h3>Your preview</h3><p class="muted">This is the model as it will be printed.</p>'
+    right='<span class="eyebrow">Step 2 of 4</span><h3>Your preview</h3><p class="muted">This is the model as it will be printed. It\'s a concept model: close to your plans, not exact. Please don\'t use it for take-offs, quotes or building from.</p>'
      +(o.repriced?'<div class="note warn">I reviewed your plans and priced this model as '+LEVEL_NAME[o.repriced.level].toLowerCase()+' detail: '+money(o.repriced.to)+' (was '+money(o.repriced.from)+'). Your earlier card hold was released. Order again below to go ahead.</div>':'')+facts(o,ch)
      +((o.ai&&(o.ai.assumptions.length||o.ai.problems.length))?'<details><summary>Assumptions</summary>'+ulist(o.ai.assumptions.concat(o.ai.problems))+'</details>':'')
      +((o.ai&&o.ai.checks&&o.ai.checks.length)?'<details><summary>Checks</summary>'+ulist(o.ai.checks)+'</details>':'')
