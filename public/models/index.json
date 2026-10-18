@@ -1,6 +1,5 @@
 [
   {"id": "hendra", "name": "Hendra house", "place": "Hendra, Brisbane", "scale": "1:100", "size": [258.0, 252.5, 91.3], "file": "/models/hendra.stl", "level": "complex", "litres": 5.9, "price": 500},
   {"id": "bardon", "name": "Bardon house", "place": "Bardon, Brisbane", "scale": "1:100", "size": [329.0, 309.0, 114.0], "file": "/models/bardon.stl", "level": "complex", "litres": 11.6, "price": 650},
-  {"id": "ferny-hills", "name": "Ferny Hills house", "place": "Ferny Hills, Brisbane", "scale": "1:75", "size": [318.8, 300.0, 138.3], "file": "/models/ferny-hills.stl", "level": "standard", "litres": 13.2, "price": 610},
   {"id": "mitchelton", "name": "Mitchelton house", "place": "Mitchelton, Brisbane", "scale": "1:150", "size": [280.2, 117.9, 51.3], "file": "/models/mitchelton.stl", "level": "simple", "litres": 1.7, "price": 300}
 ]

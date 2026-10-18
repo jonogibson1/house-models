@@ -19,7 +19,7 @@ document.addEventListener('click',function(e){
 });
 
 /* Sample on the home page: a typical single-storey brick home on a 32 x 10.5 m lot, with its finishes, openings, alfresco and landscaping. */
-var SAMPLE = { scale:'auto', title:'Sample home, Ferny Hills', north:-24, blocks:[
+var SAMPLE = { scale:'auto', title:'Sample home', north:-24, blocks:[
   {name:'Main house',x:0,y:0,w:18.95,d:7.55,storeys:1,storeyH:2.74,roof:'hip',pitch:22.5,eave:0.45,wall:'brick',roofMat:'tile',
    cladding:[{side:'e',at:0,w:3.83,z0:0.9,z1:2.74,kind:'weatherboard'},{side:'s',at:16,w:2.95,z0:0,z1:2.74,kind:'render'}],
    openings:[{side:'s',at:1.2,w:2.4,sill:0,head:2.1,kind:'door'},{side:'s',at:6.2,w:1.45,sill:0.9,head:2.1,kind:'window'},{side:'s',at:9.9,w:1.45,sill:0.9,head:2.1,kind:'window'},
@@ -195,7 +195,7 @@ Viewer.prototype.draw=function(){
   this.cam.position.set(Math.sin(this.az)*Math.cos(this.el)*d, Math.sin(this.el)*d+t, Math.cos(this.az)*Math.cos(this.el)*d);
   this.cam.lookAt(0,t,0); this.r.render(this.scene,this.cam);
 };
-/* Ferny Hills model shown on the home page; gallery.js uses the same parser. */
+/* Hendra model shown on the home page; gallery.js uses the same parser. */
 window.parseSTL=function(buf){
   var dv=new DataView(buf), n=dv.getUint32(80,true), tris=new Float32Array(n*9), o=84, k=0;
   var mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
@@ -204,7 +204,7 @@ window.parseSTL=function(buf){
   return { size:[mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2]], parts:[{ tris:tris, z0:0, kind:'model' }] };
 };
 var HERO_STL=null;
-function heroModel(){ if(!HERO_STL) HERO_STL=fetch('/models/ferny-hills.stl').then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); }).then(window.parseSTL); return HERO_STL; }
+function heroModel(){ if(!HERO_STL) HERO_STL=fetch('/models/hendra.stl').then(function(r){ if(!r.ok) throw 0; return r.arrayBuffer(); }).then(window.parseSTL); return HERO_STL; }
 var V = { hero:null, order:null, queue:null };
 var MATCOL = { lettering:'#f4f1ea', brick:'#a4553d', render:'#efe9de', weatherboard:'#dcdfd8', vertical:'#cfc6b4', stone:'#b4a58c', glass:'#2c3a44', door:'#6d5a48', post:'#efe9de',
   base:'#34383b', turf:'#5f7f45', garden:'#6b4f36', mulch:'#7a5a3a', pebbles:'#c3bdb2', concrete:'#bdbbb5', driveway:'#a8a6a0', path:'#d3cdc1', paving:'#c9bfae',
@@ -263,7 +263,7 @@ function renderHome(){
   var v=viewer('hero',true); if(v.holder!==$('#stage-hero')) v.mount($('#stage-hero'));
   if(heroTree){ v.set(tr); $('#hero-cap').textContent='Christmas tree version, about 1:'+tr.scale+'. The can is 375 ml. Drag to turn.'; }
   else {
-    $('#hero-cap').textContent='Ferny Hills house at 1:75. The can is 375 ml. Drag to turn.';
+    $('#hero-cap').textContent='Hendra house at 1:100. The can is 375 ml. Drag to turn.';
     heroModel().then(function(m){ if(!home.tree) v.set(m); }, function(){ HERO_STL=null; if(!home.tree) v.set(r); $('#hero-cap').textContent='Sample house at 1:'+r.scale+'. The can is 375 ml. Drag to turn.'; });
   }
 }
