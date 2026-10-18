@@ -458,6 +458,8 @@ footer{margin-top:64px}
           <div class="field"><label for="in-addr">Street address of the house</label><input type="text" id="in-addr" autocomplete="street-address"></div>
           <div class="field"><label for="in-suburb">Suburb</label><input type="text" id="in-suburb" autocomplete="address-level2"></div>
         </div>
+        <div class="field"><label for="in-plinth">Words on the plinth (optional)</label><input type="text" id="in-plinth" maxlength="48" placeholder="The street address"><span class="muted small">One line, up to 48 characters, such as a family name or the year you moved in. Leave it blank for the street address, or type NONE for no words. The scale and north point always go on.</span></div>
+        <div class="field"><label for="in-notes">Anything else I should know? (optional)</label><textarea id="in-notes" maxlength="600" rows="3" placeholder="Which plans are the latest, a deadline, a gift, that sort of thing."></textarea></div>
         <div class="drop">
           <label for="in-plans">Building plans (PDF)</label>
           <span class="muted small">Floor plan, elevations and site plan. Landscape and roof plans add detail.</span>
@@ -466,10 +468,10 @@ footer{margin-top:64px}
         </div>
         <div class="stack tight">
           <label class="check"><input type="checkbox" id="in-c1"><span>I own this house or have the owner's OK.</span></label>
-          <label class="check"><input type="checkbox" id="in-c2"><span>I'm allowed to use these plans. If a designer or builder drew them, I've checked with them.</span></label>
+          <label class="check"><input type="checkbox" id="in-c2"><span>I'm able to share these plans with Small Build Co. If a designer or builder drew them, I've checked with them.</span></label>
           <label class="check"><input type="checkbox" id="in-c3"><span>I understand it's a concept model of the outside, made with AI. It's close to my plans but not exact, and it's not for take-offs, quotes or building from.</span></label>
         </div>
-        <p class="muted small">Your PDF stays in your browser. Images and text from its pages are sent to this site and to Claude, Anthropic's AI, so it can read the plans. They aren't kept. Your name, email, address and model are stored with your order.</p>
+        <p class="muted small">Your plans are treated as confidential. I don't pass them on, and your model is never shown publicly without your OK. Your PDF stays in your browser. Images and text from its pages are sent to this site and to Claude, Anthropic's AI, so it can read the plans. They aren't kept. Your name, email, address and model are stored with your order.</p>
         <p class="err" id="start-err" role="alert" hidden></p>
         <div class="row"><button class="btn" type="submit">Show me my house</button></div>
         <div class="note quiet stack tight" id="test-tools" hidden><span><b>Testing?</b> These two buttons are for testing only.</span><div class="row"><button class="btn ghost sm" type="button" id="fill-test">Fill with test details</button><button class="btn ghost sm" type="button" id="use-sample">Use the sample plan set</button></div></div>

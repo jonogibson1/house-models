@@ -399,7 +399,7 @@ $('#use-sample').addEventListener('click',function(){
 $('#f-start').addEventListener('submit',function(e){
   e.preventDefault();
   var err=$('#start-err'), plans=sampleF ? [sampleF] : Array.prototype.slice.call($('#in-plans').files), msg='';
-  var f={ name:gate.name, email:gate.email, pass:gate.pass, addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim() };
+  var f={ name:gate.name, email:gate.email, pass:gate.pass, addr:$('#in-addr').value.trim(), suburb:$('#in-suburb').value.trim(), plinth:$('#in-plinth').value.trim(), notes:$('#in-notes').value.trim() };
   if(!gate.pass){ gateShow('email'); return; }
   if(!f.addr) msg='Add the street address of the house.';
   else if(!plans.length) msg='Add your building plans as a PDF. The model is built from them.';
@@ -484,7 +484,7 @@ function facts(o, choice){
 function ulist(a){ return '<ul class="plain">'+a.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>'; }
 function shipOf(o, choice){ return choice==='tree' && o.quote.tree ? o.quote.tree.ship : o.quote.ship; }
 function totalsOf(o, choice, delivery){ var tr=choice==='tree' && o.quote.tree, price=choice==='stl'?o.quote.stl:tr?o.quote.tree.price:o.quote.print, ship=(choice!=='stl' && delivery==='post')?shipOf(o,choice).cost:0; return { price:price, ship:ship, total:price+ship }; }
-function titled(params, o){ var t=clone(params); t.title=[o.addr,o.suburb].filter(Boolean).join(', '); return t; }
+function titled(params, o){ var t=clone(params), w=(o.plinth||'').trim(); t.title=/^none$/i.test(w)?'':(w||[o.addr,o.suburb].filter(Boolean).join(', ')); return t; }
 function modelFor(o){ return o.choice==='tree' && o.quote && o.quote.tree ? treeOf(o.params) : titled(o.params, o); }
 var pollT=null;
 function showOrder(){
@@ -723,7 +723,7 @@ function renderQueue(){
   else {
     d='<div class="row" style="justify-content:space-between"><div class="stack tight"><span class="eyebrow">Order <span class="mono">'+o.id+'</span></span><h2>'+esc(o.name)+'</h2></div>'+pill(o)+'</div>'
      +'<dl class="spec" style="margin-top:14px"><dt>House</dt><dd>'+esc(o.addr)+(o.suburb?', '+esc(o.suburb):'')+'</dd><dt>Email</dt><dd>'+esc(o.email)+'</dd><dt>Plans</dt><dd>'+(o.files||[]).map(function(f){return esc(f.name)+(f.size?' ('+kb(f.size)+')':'');}).join('<br>')+'</dd>'
-     +(o.notes?'<dt>Notes</dt><dd>'+esc(o.notes)+'</dd>':'')+(o.revNote?'<dt>Change asked</dt><dd>'+esc(o.revNote)+'</dd>':'')
+     +'<dt>Plinth</dt><dd>'+esc(o.plinth||'Street address')+'</dd>'+(o.notes?'<dt>Notes</dt><dd>'+esc(o.notes)+'</dd>':'')+(o.revNote?'<dt>Change asked</dt><dd>'+esc(o.revNote)+'</dd>':'')
      +(o.total!=null?'<dt>Ordered</dt><dd>'+itemName(o.choice)+', '+money2(o.price)+(o.choice==='stl'?'':(o.delivery==='post'?' plus '+money2(o.ship)+' postage':', pickup'))+'</dd><dt>Total held</dt><dd>'+money2(o.total)+'</dd>':'')+'</dl>';
     var early = o.status==='received'||o.status==='revision'||o.status==='unreadable';
     var editing = ui.edit && ui.edit.id===o.id;

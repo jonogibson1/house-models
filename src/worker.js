@@ -159,6 +159,7 @@ async function notifyUpload(env, db, id, site) {
   const head = ok ? 'preview ready, A$' + o.quote.print + ' (' + LEVEL_NAME[o.quote.level] + ')'
     : stuck ? 'plans never arrived' : o.aiErr ? 'read failed' : 'plans could not be read';
   const lines = ['Upload ' + o.id + ': ' + head + '.', '', 'Name: ' + o.name, 'Email: ' + o.email, 'House: ' + o.addr + (o.suburb ? ', ' + o.suburb : ''),
+    'Plinth: ' + (o.plinth || '(street address)'), ...(o.notes ? ['Notes: ' + o.notes] : []),
     'Files: ' + ((o.files || []).map((f) => f.name).join(', ') || 'none listed')];
   if (ok && o.ai && o.ai.confidence < 0.6) lines.push('', 'LOW CONFIDENCE: the read is shaky. Check the preview before they order; you can fix it by hand, ask for better plans or close it from the queue.', '');
   if (ok) lines.push('Model: 1:' + o.quote.scale + ', ' + o.quote.size.map((v) => Math.round(v)).join(' x ') + ' mm, ' + o.quote.litres + ' L, about ' + o.quote.hours + ' h to print',
@@ -653,7 +654,7 @@ async function handle(request, env, bg) {
     if (await capped('orders', 'DAILY_ORDER_CAP')) return fail(429, 'cap', ERR.cap);
     let id = ''; for (let i = 0; i < 5 && (!id || (await db.load('o:' + id))); i++) id = 'FH-' + rid(5, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789');
     const o = { id, key: rid(20, 'abcdefghijklmnopqrstuvwxyz0123456789'), created: Date.now(), ip,
-      name, email, addr, suburb: str(b.suburb, 60), notes: '',
+      name, email, addr, suburb: str(b.suburb, 60), plinth: str(b.plinth, 48), notes: str(b.notes, 600),
       files: (Array.isArray(b.files) ? b.files : []).slice(0, 6).map((f) => ({ name: str(f && f.name, 120), size: +(f && f.size) || 0 })), 
       emailChecked: !!vp.checked, status: 'received', params: null, quote: null, choice: null, delivery: null, revUsed: false, revNote: '', pages: 0, images: 0, reads: 0, busy: 0 };
     await db.save('o:' + o.id, o);
