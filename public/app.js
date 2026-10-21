@@ -717,7 +717,7 @@ function renderQueue(){
     +'<div class="row"><button type="button" class="btn sm" id="set-save">Save prices</button></div>'
     +'<p class="muted small">New prices apply to previews made from now on. Postage uses Australia Post Parcel Post rates for own packaging as at 1 July 2026: '+POST.map(function(b){ return 'up to '+(b[0]<1?b[0]*1000+' g':b[0]+' kg')+' '+money2(b[1]); }).join(', ')+'. Box is the model plus 20 mm padding each side, plus 150 g of packaging, charged on the greater of actual and cubic weight.</p>'
     +'</div></details>'
-    +alertsBox();
+    +alertsBox()+trafficBox();
   var d='';
   if(!o) d='<p class="muted">Nothing selected.</p>';
   else {
@@ -784,10 +784,43 @@ function renderQueue(){
   var bp=$('#bp-ask'); if(bp) bp.addEventListener('click',function(){ var need=$$('[data-need]:checked',root).map(function(c){ return c.value; }), note=$('#bp-note').value.trim(); if(!need.length&&!note){ toast('Tick what is missing or add a note.'); return; } act(o,{action:'ask_plans',need:need,note:note},'Customer asked for better plans.'); });
   var bc=$('#bp-close'); if(bc) bc.addEventListener('click',function(){ act(o,{action:'close',reason:$('#bp-reason').value},'Order closed. Customer told.'); });
   var nx=$('#q-next'); if(nx) nx.addEventListener('click',function(){ act(o,{action:this.getAttribute('data-to')}); });
-  bindAlerts();
+  bindAlerts(); bindTraffic();
   $('#set-save').addEventListener('click',function(){
     api('PUT','/api/admin/pricing',{base:$('#set-base').value,perLitre:$('#set-litre').value,floor:$('#set-floor').value,standard:$('#set-std').value,complex:$('#set-cx').value,stl:$('#set-stl').value,tree:$('#set-tree').value}).then(function(r){ cfg.pricing=r.pricing; toast('Prices saved.'); }, function(e){ toast(e.message); });
   });
+}
+
+/* ---------- traffic: page loads and visitors counted by the server, no cookies, no third party ---------- */
+var trf={open:false, days:null, err:''};
+function topList(objs, n){
+  var t={}; objs.forEach(function(o){ for(var k in (o||{})) t[k]=(t[k]||0)+o[k]; });
+  var a=Object.keys(t).map(function(k){ return [k,t[k]]; }).sort(function(x,y){ return y[1]-x[1]; }).slice(0,n);
+  return a.length?a.map(function(x){ return esc(x[0])+' '+x[1]; }).join(', '):'none yet';
+}
+function trafficBox(){
+  var body;
+  if(trf.err) body='<p class="err">'+esc(trf.err)+'</p>';
+  else if(!trf.days) body='<p class="muted small">Loading...</p>';
+  else if(!trf.days.length) body='<p class="muted small">No visits counted yet. Counting started when this was switched on.</p>';
+  else {
+    var d=trf.days, sum=function(k,arr){ return arr.reduce(function(a,x){ return a+(x[k]||0); },0); }, w=d.slice(0,7), m=d.slice(0,30);
+    body='<p class="small"><b>Last 7 days:</b> '+sum('visitors',w)+' visitors, '+sum('views',w)+' page loads, '+sum('models',w)+' 3D model loads. <b>Last 30 days:</b> '+sum('visitors',m)+' visitors, '+sum('views',m)+' page loads.</p>'
+      +'<p class="small"><b>Came from (30 days):</b> '+topList(m.map(function(x){ return x.refs; }),8)+'</p>'
+      +'<p class="small"><b>Link tags (?src=, 30 days):</b> '+topList(m.map(function(x){ return x.src; }),8)+'</p>'
+      +'<p class="small"><b>Countries:</b> '+topList(m.map(function(x){ return x.countries; }),6)+'. <b>Devices:</b> '+topList(m.map(function(x){ return x.devices; }),3)+'</p>'
+      +'<p class="small"><b>Pages and models:</b> '+topList(m.map(function(x){ return x.paths; }),10)+'</p>'
+      +'<table class="small" style="border-collapse:collapse;width:100%"><thead><tr><th style="text-align:left">Day</th><th style="text-align:right">Visitors</th><th style="text-align:right">Page loads</th><th style="text-align:right">Model loads</th></tr></thead><tbody>'
+      +d.slice(0,14).map(function(x){ return '<tr><td>'+esc(x.day)+'</td><td style="text-align:right">'+x.visitors+'</td><td style="text-align:right">'+x.views+'</td><td style="text-align:right">'+(x.models||0)+'</td></tr>'; }).join('')+'</tbody></table>'
+      +'<p class="muted small">Counted on the server: bots and link previews are left out, your own visits are included. A visitor is one device on one day. The home page loads its 3D model on every visit, so model loads include those.</p>';
+  }
+  return '<details style="margin-top:12px" id="trf-box"'+(trf.open?' open':'')+'><summary>Traffic</summary><div class="stack tight" style="margin-top:10px">'+body+'</div></details>';
+}
+function loadTraffic(){
+  api('GET','/api/admin/traffic?days=90').then(function(r){ trf.days=r.days||[]; trf.err=''; renderQueue(); }, function(e){ trf.err=e.message; renderQueue(); });
+}
+function bindTraffic(){
+  var b=$('#trf-box'); if(!b) return;
+  b.addEventListener('toggle',function(){ trf.open=b.open; if(b.open && !trf.days) loadTraffic(); });
 }
 
 /* ---------- owner alerts: phone push (ntfy, no account) and email (Resend key pasted by the owner) ---------- */

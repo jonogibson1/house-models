@@ -202,11 +202,22 @@ export class Store extends DurableObject {
   async purge() {
     const now = Date.now(), cut = new Date(now - 2 * 864e5).toISOString().slice(0, 10), del = [];
     for (const pre of ['vc:', 'vp:']) for (const [k, v] of await this.ctx.storage.list({ prefix: pre })) if (!v || (v.exp || 0) < now - 864e5) del.push(k);
-    for (const pre of ['vs:', 've:', 'vg:', 'rd:', 'adm:', 'reads:', 'orders:']) for (const [k] of await this.ctx.storage.list({ prefix: pre })) { const d = (k.match(/\d{4}-\d{2}-\d{2}/) || [''])[0]; if (d && d < cut) del.push(k); }
+    for (const pre of ['vs:', 've:', 'vg:', 'rd:', 'adm:', 'reads:', 'orders:', 'tvh:']) for (const [k] of await this.ctx.storage.list({ prefix: pre })) { const d = (k.match(/\d{4}-\d{2}-\d{2}/) || [''])[0]; if (d && d < cut) del.push(k); }
     for (const [k, v] of await this.ctx.storage.list({ prefix: 'lead:' })) if (!v || now - (v.at || 0) > KEEP_MS) del.push(k);
     for (let i = 0; i < del.length; i += 128) await this.ctx.storage.delete(del.slice(i, i + 128));
     return del.length;
   }
+  /* Traffic: one record per day (page loads, visitors, where they came from). The visitor hash is salted and
+     changes every day, so nobody can be followed across days; raw IP addresses are never stored. */
+  async hit(d, h, rec) {
+    const k = 'tv:' + d, t = (await this.ctx.storage.get(k)) || { day: d, views: 0, visitors: 0, models: 0, paths: {}, refs: {}, src: {}, countries: {}, devices: {} };
+    const inc = (o, key) => { if (!key) return; key = String(key).slice(0, 80); o[key] = (o[key] || 0) + 1; };
+    if (rec.model) { t.models++; inc(t.paths, rec.path); await this.ctx.storage.put(k, t); return; }
+    t.views++; inc(t.paths, rec.path); inc(t.refs, rec.ref); inc(t.src, rec.src); inc(t.countries, rec.country); inc(t.devices, rec.device);
+    if (!(await this.ctx.storage.get('tvh:' + d + ':' + h))) { t.visitors++; await this.ctx.storage.put('tvh:' + d + ':' + h, 1); }
+    await this.ctx.storage.put(k, t);
+  }
+  async traffic(days) { const m = await this.ctx.storage.list({ prefix: 'tv:', reverse: true, limit: days }); return [...m.values()]; }
   /* Atomic counter with a ceiling. Returns false once the ceiling is reached. */
   async bump(k, max) { const n = (await this.ctx.storage.get(k)) || 0; if (n >= max) return false; await this.ctx.storage.put(k, n + 1); return true; }
   /* Claims an order for one slow step (a read or a change) so two cannot run at once. Returns '' when claimed, or why not. */
@@ -545,6 +556,7 @@ async function handle(request, env, bg) {
       }
       return json({ alerts: alertView(env, al), test });
     }
+    if (path === '/api/admin/traffic' && m === 'GET') return json({ days: await db.traffic(Math.min(400, Math.max(1, parseInt(url.searchParams.get('days') || '90', 10) || 90))) });
     if (path === '/api/admin/pricing' && m === 'PUT') {
       const b = await body(), p = {};
       for (const k of Object.keys(DEFAULT_PRICING)) { const v = parseFloat(b[k]); p[k] = isFinite(v) && v >= 0 && v < 100000 ? v : pricing[k]; }
@@ -806,6 +818,23 @@ async function sweep(env) {
   await db.purge();
 }
 
+/* Counts a page load or a 3D model load. Bots, link previews and the owner's own queue page are left out. */
+const BOT = /bot|crawl|spider|slurp|preview|facebookexternalhit|embedly|whatsapp|telegram|discord|curl|wget|python|headless|lighthouse|monitor|uptime/i;
+async function count(request, r, env) {
+  const ua = request.headers.get('user-agent') || '', url = new URL(request.url);
+  if (!ua || BOT.test(ua)) return;
+  const ct = r.headers.get('content-type') || '', model = /\/models\/[^/]+\.stl$/i.test(url.pathname);
+  if (!model && !ct.includes('text/html')) return;
+  if (!model && request.headers.get('sec-fetch-dest') && request.headers.get('sec-fetch-dest') !== 'document') return;
+  let ref = '';
+  try { const h = new URL(request.headers.get('referer') || '').hostname.replace(/^www\./, ''); if (h && h !== url.hostname.replace(/^www\./, '')) ref = h; } catch (e) { /* no referrer */ }
+  const src = (url.searchParams.get('utm_source') || url.searchParams.get('src') || '').toLowerCase().replace(/[^a-z0-9_.-]/g, '').slice(0, 40);
+  const ip = ipKey(request.headers.get('cf-connecting-ip') || 'local'), d = day();
+  const h = (await sha('tv:' + d + ':' + (env.ADMIN_PASSCODE || 'salt') + ':' + ip + ':' + ua)).slice(0, 20);
+  const device = /mobi|iphone|android/i.test(ua) ? 'mobile' : /ipad|tablet/i.test(ua) ? 'tablet' : 'desktop';
+  await store(env).hit(d, h, { model, path: url.pathname || '/', ref, src, country: (request.cf && request.cf.country) || '', device });
+}
+
 /* Security headers on every response. Everything the site loads is its own, except Google Fonts. */
 const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cloudflareinsights.com; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 function secure(r) {
@@ -819,7 +848,11 @@ export default {
   async scheduled(event, env, ctx) { ctx.waitUntil(sweep(env)); },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return secure(await env.ASSETS.fetch(request));
+    if (!url.pathname.startsWith('/api/')) {
+      const r = await env.ASSETS.fetch(request);
+      if (request.method === 'GET' && r.ok && ctx && ctx.waitUntil) ctx.waitUntil(count(request, r, env).catch((e) => console.log('traffic count failed', e && e.message)));
+      return secure(r);
+    }
     const bg = ctx && ctx.waitUntil ? (p) => ctx.waitUntil(p) : null;
     try { return secure(await handle(request, env, bg)); }
     catch (e) {
